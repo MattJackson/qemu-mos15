@@ -896,10 +896,11 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CAPABILITIES:
-        /* mos15: Capabilities added one at a time (tested individually):
-         * PITCHLOCK — stable framebuffer ✓
-         * EXTENDED_FIFO — larger FIFO with caps/fence */
-        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO;
+        /* mos15: All tested capabilities for iMac Retina display.
+         * PITCHLOCK ✓, EXTENDED_FIFO ✓, rest added together. */
+        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO |
+               SVGA_CAP_8BIT_EMULATION | SVGA_CAP_ALPHA_BLEND |
+               SVGA_CAP_ALPHA_CURSOR;
 #ifdef HW_RECT_ACCEL
         caps |= SVGA_CAP_RECT_COPY;
 #endif

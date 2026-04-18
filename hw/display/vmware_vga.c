@@ -896,9 +896,10 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CAPABILITIES:
-        /* mos15: Start with pitchlock only. Adding caps one at a time
-         * to isolate which caused the previous boot hang. */
-        caps = SVGA_CAP_PITCHLOCK;
+        /* mos15: Capabilities added one at a time (tested individually):
+         * PITCHLOCK — stable framebuffer ✓
+         * EXTENDED_FIFO — larger FIFO with caps/fence */
+        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO;
 #ifdef HW_RECT_ACCEL
         caps |= SVGA_CAP_RECT_COPY;
 #endif

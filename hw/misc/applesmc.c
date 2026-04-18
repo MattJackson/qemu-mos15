@@ -454,7 +454,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     /* mos15: GPU power management — prevents AGPM crash cascade.
      * Without HE2N, AGPM reads NOEXIST → error 0x82 → system hang
      * on dynamic wallpaper changes. Value 0x00 = no GPU power mgmt. */
-    applesmc_add_key(s, "HE2N", 1, "\x00");
+    applesmc_add_key(s, "HE2N", 1, "\x01");  /* GPU power enabled */
 
     /* mos15: Watchdog timer control — fixes 16 SMCWDT errors per boot.
      * QEMU's SMC doesn't implement the watchdog key, VirtualSMC doesn't
@@ -570,7 +570,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "WIz0", 2, "\x00\x00");  /* WiFi zone 0 */
 
     /* mos15: Write targets (also need to be readable) */
-    applesmc_add_key(s, "HE0N", 1, "\x00");  /* iGPU power envelope */
+    applesmc_add_key(s, "HE0N", 1, "\x01");  /* iGPU power enabled */
     applesmc_add_key(s, "MSDW", 1, "\x00");  /* MSD write */
     applesmc_add_key(s, "NTOK", 1, "\x00");  /* notification token */
 

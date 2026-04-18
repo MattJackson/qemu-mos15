@@ -126,7 +126,12 @@ static void applesmc_io_cmd_write(void *opaque, hwaddr addr, uint64_t val,
     smc_debug("CMD received: 0x%02x\n", (uint8_t)val);
     switch (val) {
     case APPLESMC_READ_CMD:
-        /* did last command run through OK? */
+    case APPLESMC_WRITE_CMD:
+    case APPLESMC_GET_KEY_BY_INDEX_CMD:
+    case APPLESMC_GET_KEY_TYPE_CMD:
+        /* mos15: Accept all standard SMC commands.
+         * Original code only handled READ_CMD — macOS hangs if WRITE/TYPE
+         * commands return BAD_CMD during early AppleSMC driver init. */
         if (status == APPLESMC_ST_CMD_DONE || status == APPLESMC_ST_NEW_CMD) {
             s->cmd = val;
             s->status = APPLESMC_ST_NEW_CMD | APPLESMC_ST_ACK;
@@ -137,7 +142,7 @@ static void applesmc_io_cmd_write(void *opaque, hwaddr addr, uint64_t val,
         }
         break;
     default:
-        smc_debug("UNEXPECTED CMD 0x%02x\n", (uint8_t)val);
+        fprintf(stderr, "mos15-smc: unexpected CMD 0x%02x\n", (uint8_t)val);
         s->status = APPLESMC_ST_NEW_CMD;
         s->status_1e = APPLESMC_ST_1E_BAD_CMD;
     }
@@ -179,13 +184,10 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
                 s->data_len = d->len;
                 s->data_pos = 0;
                 s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
-                s->status_1e = APPLESMC_ST_CMD_DONE;  /* clear on valid key */
+                s->status_1e = APPLESMC_ST_CMD_DONE;
             } else {
-                /* mos15: Return zeros for unknown keys instead of NOEXIST.
-                 * This prevents AGPM and other subsystems from crashing
-                 * when they read keys that don't exist in our virtual SMC.
-                 * Log every unknown key so we can add proper values later. */
-                fprintf(stderr, "mos15-smc: unknown key '%c%c%c%c' len=%d, returning zeros\n",
+                /* mos15: Return zeros for unknown keys instead of NOEXIST. */
+                fprintf(stderr, "mos15-smc: READ unknown key '%c%c%c%c' len=%d\n",
                         s->key[0], s->key[1], s->key[2], s->key[3], (uint8_t)val);
                 memset(s->data, 0, APPLESMC_MAX_DATA_LENGTH);
                 s->data_len = (uint8_t)val;
@@ -196,7 +198,78 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->read_pos++;
         break;
+    case APPLESMC_WRITE_CMD:
+        /* mos15: Accept writes silently. macOS writes SMC keys during
+         * power management, fan control, etc. We accept and log them. */
+        if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
+            break;
+        }
+        if (s->read_pos < 4) {
+            s->key[s->read_pos] = val;
+            s->status = APPLESMC_ST_ACK;
+        } else if (s->read_pos == 4) {
+            s->data_len = (uint8_t)val;
+            s->data_pos = 0;
+            s->status = APPLESMC_ST_ACK;
+        } else {
+            if (s->data_pos < s->data_len) {
+                s->data[s->data_pos] = (uint8_t)val;
+                s->data_pos++;
+                if (s->data_pos == s->data_len) {
+                    fprintf(stderr, "mos15-smc: WRITE key '%c%c%c%c' len=%d\n",
+                            s->key[0], s->key[1], s->key[2], s->key[3], s->data_len);
+                    s->status = APPLESMC_ST_CMD_DONE;
+                    s->status_1e = APPLESMC_ST_CMD_DONE;
+                } else {
+                    s->status = APPLESMC_ST_ACK;
+                }
+            }
+        }
+        s->read_pos++;
+        break;
+    case APPLESMC_GET_KEY_TYPE_CMD:
+        /* mos15: Return a generic type for any key.
+         * macOS queries key types during SMC enumeration. */
+        if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
+            break;
+        }
+        if (s->read_pos < 4) {
+            s->key[s->read_pos] = val;
+            s->status = APPLESMC_ST_ACK;
+        } else if (s->read_pos == 4) {
+            /* Return type info: 4 bytes type + 1 byte len + 1 byte attr */
+            d = applesmc_find_key(s);
+            s->data[0] = 'u'; s->data[1] = 'i'; /* type: "ui8 " or similar */
+            s->data[2] = '8'; s->data[3] = ' ';
+            s->data[4] = d ? d->len : 1;  /* data length */
+            s->data[5] = 0xC0;  /* attr: readable | writable */
+            s->data_len = 6;
+            s->data_pos = 0;
+            s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
+            s->status_1e = APPLESMC_ST_CMD_DONE;
+        }
+        s->read_pos++;
+        break;
+    case APPLESMC_GET_KEY_BY_INDEX_CMD:
+        /* mos15: Return empty for key-by-index queries.
+         * macOS uses this to enumerate all keys. */
+        if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
+            break;
+        }
+        if (s->read_pos < 4) {
+            s->key[s->read_pos] = val;
+            s->status = APPLESMC_ST_ACK;
+        } else if (s->read_pos == 4) {
+            memset(s->data, 0, 4);
+            s->data_len = 4;
+            s->data_pos = 0;
+            s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
+            s->status_1e = APPLESMC_ST_CMD_DONE;
+        }
+        s->read_pos++;
+        break;
     default:
+        fprintf(stderr, "mos15-smc: unhandled data for cmd 0x%02x\n", s->cmd);
         s->status = APPLESMC_ST_CMD_DONE;
         s->status_1e = APPLESMC_ST_1E_STILL_BAD_CMD;
     }

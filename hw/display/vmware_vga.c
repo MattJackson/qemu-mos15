@@ -218,10 +218,10 @@ enum {
 #define SVGA_FIFO_FLAG_NONE             0
 #define SVGA_FIFO_FLAG_ACCELFRONT       (1 << 0)
 
-/* These values can probably be changed arbitrarily.  */
+/* mos15: Raised from 2368x1770 (pre-Retina) to 4K */
 #define SVGA_SCRATCH_SIZE               0x8000
-#define SVGA_MAX_WIDTH                  2368
-#define SVGA_MAX_HEIGHT                 1770
+#define SVGA_MAX_WIDTH                  3840
+#define SVGA_MAX_HEIGHT                 2160
 
 #ifdef VERBOSE
 # define GUEST_OS_BASE          0x5001
@@ -896,7 +896,10 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CAPABILITIES:
-        caps = SVGA_CAP_NONE;
+        /* mos15: Extended capabilities for modern macOS compatibility */
+        caps = SVGA_CAP_EXTENDED_FIFO | SVGA_CAP_PITCHLOCK |
+               SVGA_CAP_8BIT_EMULATION | SVGA_CAP_ALPHA_BLEND |
+               SVGA_CAP_MULTIMON;
 #ifdef HW_RECT_ACCEL
         caps |= SVGA_CAP_RECT_COPY;
 #endif

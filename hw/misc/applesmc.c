@@ -181,10 +181,17 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
                 s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
                 s->status_1e = APPLESMC_ST_CMD_DONE;  /* clear on valid key */
             } else {
-                smc_debug("READ_CMD: key '%c%c%c%c' not found!\n",
-                          s->key[0], s->key[1], s->key[2], s->key[3]);
-                s->status = APPLESMC_ST_CMD_DONE;
-                s->status_1e = APPLESMC_ST_1E_NOEXIST;
+                /* mos15: Return zeros for unknown keys instead of NOEXIST.
+                 * This prevents AGPM and other subsystems from crashing
+                 * when they read keys that don't exist in our virtual SMC.
+                 * Log every unknown key so we can add proper values later. */
+                fprintf(stderr, "mos15-smc: unknown key '%c%c%c%c' len=%d, returning zeros\n",
+                        s->key[0], s->key[1], s->key[2], s->key[3], (uint8_t)val);
+                memset(s->data, 0, APPLESMC_MAX_DATA_LENGTH);
+                s->data_len = (uint8_t)val;
+                s->data_pos = 0;
+                s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
+                s->status_1e = APPLESMC_ST_CMD_DONE;
             }
         }
         s->read_pos++;

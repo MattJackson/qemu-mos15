@@ -1,0 +1,1 @@
+/tmp/ismc: line 1: Not: command not found

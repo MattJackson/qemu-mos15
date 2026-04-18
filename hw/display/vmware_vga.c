@@ -896,7 +896,9 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CAPABILITIES:
-        caps = SVGA_CAP_NONE;
+        /* mos15: Start with pitchlock only. Adding caps one at a time
+         * to isolate which caused the previous boot hang. */
+        caps = SVGA_CAP_PITCHLOCK;
 #ifdef HW_RECT_ACCEL
         caps |= SVGA_CAP_RECT_COPY;
 #endif

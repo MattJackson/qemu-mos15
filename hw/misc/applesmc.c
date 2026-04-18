@@ -450,6 +450,10 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "BSLN", 1, "\x00");  /* baseline */
     applesmc_add_key(s, "EPCI", 4, "\x00\x00\x00\x00"); /* EPC info */
     applesmc_add_key(s, "BEMB", 1, "\x01");  /* board embedded */
+
+    /* mos15: Keys discovered via logging during boot */
+    applesmc_add_key(s, "OSWD", 2, "\x00\x00");  /* OS watchdog timer */
+    applesmc_add_key(s, "MSSW", 1, "\x00");  /* macOS software state */
 }
 
 static void applesmc_unrealize(DeviceState *dev)

@@ -228,8 +228,10 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     case APPLESMC_GET_KEY_TYPE_CMD:
-        /* mos15: Return a generic type for any key.
-         * macOS queries key types during SMC enumeration. */
+        /* mos15: Return key type info. AppleSMC uses GET_KEY_TYPE (0x13) to
+         * query type/size/attributes. The data phase receives the 4-byte key
+         * name, then a 1-byte length request. Response is 6 bytes:
+         * [type0][type1][type2][type3][data_len][attributes] */
         if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
             break;
         }
@@ -237,12 +239,37 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
             s->key[s->read_pos] = val;
             s->status = APPLESMC_ST_ACK;
         } else if (s->read_pos == 4) {
-            /* Return type info: 4 bytes type + 1 byte len + 1 byte attr */
             d = applesmc_find_key(s);
-            s->data[0] = 'u'; s->data[1] = 'i'; /* type: "ui8 " or similar */
-            s->data[2] = '8'; s->data[3] = ' ';
-            s->data[4] = d ? d->len : 1;  /* data length */
-            s->data[5] = 0xC0;  /* attr: readable | writable */
+            /* Type: "ui8 " for 1-byte, "ui16" for 2-byte, "ui32" for 4-byte */
+            if (d != NULL) {
+                switch (d->len) {
+                case 1:
+                    s->data[0] = 'u'; s->data[1] = 'i';
+                    s->data[2] = '8'; s->data[3] = ' ';
+                    break;
+                case 2:
+                    s->data[0] = 'u'; s->data[1] = 'i';
+                    s->data[2] = '1'; s->data[3] = '6';
+                    break;
+                case 4:
+                    s->data[0] = 'u'; s->data[1] = 'i';
+                    s->data[2] = '3'; s->data[3] = '2';
+                    break;
+                default:
+                    s->data[0] = 'c'; s->data[1] = 'h';
+                    s->data[2] = '8'; s->data[3] = '*';
+                    break;
+                }
+                s->data[4] = d->len;
+                s->data[5] = 0xD0;  /* attr: readable | writable | function */
+            } else {
+                fprintf(stderr, "mos15-smc: GET_KEY_TYPE unknown key '%c%c%c%c'\n",
+                        s->key[0], s->key[1], s->key[2], s->key[3]);
+                s->data[0] = 'u'; s->data[1] = 'i';
+                s->data[2] = '8'; s->data[3] = ' ';
+                s->data[4] = 1;
+                s->data[5] = 0xD0;
+            }
             s->data_len = 6;
             s->data_pos = 0;
             s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
@@ -454,6 +481,12 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     /* mos15: Keys discovered via logging during boot */
     applesmc_add_key(s, "OSWD", 2, "\x00\x00");  /* OS watchdog timer */
     applesmc_add_key(s, "MSSW", 1, "\x00");  /* macOS software state */
+
+    /* mos15: Keys that AppleSMCFamily queries via GET_KEY_TYPE */
+    applesmc_add_key(s, "RGEN", 1, "\x02");  /* SMC generation/revision */
+    applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00"); /* display power limit */
+    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x18"); /* number of keys (24) */
+    applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00"); /* SMC base address */
 }
 
 static void applesmc_unrealize(DeviceState *dev)

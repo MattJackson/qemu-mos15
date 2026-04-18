@@ -483,15 +483,99 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "EPCI", 4, "\x00\x00\x00\x00"); /* EPC info */
     applesmc_add_key(s, "BEMB", 1, "\x01");  /* board embedded */
 
-    /* mos15: Keys discovered via logging during boot */
+    /* mos15: Boot-discovered keys */
     applesmc_add_key(s, "OSWD", 2, "\x00\x00");  /* OS watchdog timer */
     applesmc_add_key(s, "MSSW", 1, "\x00");  /* macOS software state */
-
-    /* mos15: Keys that AppleSMCFamily queries via GET_KEY_TYPE */
     applesmc_add_key(s, "RGEN", 1, "\x02");  /* SMC generation/revision */
     applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00"); /* display power limit */
-    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x18"); /* number of keys (24) */
     applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00"); /* SMC base address */
+
+    /* mos15: Temperature sensors (27 keys) — all return 0 (no real sensors) */
+    applesmc_add_key(s, "TC0F", 2, "\x00\x00");  /* CPU 0 PECI filtered */
+    applesmc_add_key(s, "TC0P", 2, "\x00\x00");  /* CPU 0 proximity */
+    applesmc_add_key(s, "TCXc", 2, "\x00\x00");  /* CPU PECI core max */
+    applesmc_add_key(s, "TG0F", 2, "\x00\x00");  /* GPU 0 filtered */
+    applesmc_add_key(s, "TG1F", 2, "\x00\x00");  /* GPU 1 filtered */
+    applesmc_add_key(s, "TH0P", 2, "\x00\x00");  /* HDD proximity */
+    applesmc_add_key(s, "TH1A", 2, "\x00\x00");  /* HDD 1 ambient */
+    applesmc_add_key(s, "TH1C", 2, "\x00\x00");  /* HDD 1 core */
+    applesmc_add_key(s, "TH1F", 2, "\x00\x00");  /* HDD 1 filtered */
+    applesmc_add_key(s, "TL0V", 2, "\x00\x00");  /* LCD 0 */
+    applesmc_add_key(s, "TL1V", 2, "\x00\x00");  /* LCD 1 */
+    applesmc_add_key(s, "TM0P", 2, "\x00\x00");  /* memory proximity */
+    applesmc_add_key(s, "TM0V", 2, "\x00\x00");  /* memory VRM */
+    applesmc_add_key(s, "Tp00", 2, "\x00\x00");  /* power supply */
+    applesmc_add_key(s, "Tp2F", 2, "\x00\x00");  /* power supply 2 */
+    applesmc_add_key(s, "Ts0S", 2, "\x00\x00");  /* sensor 0 */
+    applesmc_add_key(s, "TS0V", 2, "\x00\x00");  /* sensor 0 voltage */
+    applesmc_add_key(s, "Ts1S", 2, "\x00\x00");  /* sensor 1 */
+    applesmc_add_key(s, "Ts2S", 2, "\x00\x00");  /* sensor 2 */
+    applesmc_add_key(s, "TB0T", 2, "\x00\x00");  /* battery 0 */
+    applesmc_add_key(s, "TB1T", 2, "\x00\x00");  /* battery 1 */
+    applesmc_add_key(s, "TB2T", 2, "\x00\x00");  /* battery 2 */
+    applesmc_add_key(s, "TA0V", 2, "\x00\x00");  /* ambient 0 */
+    applesmc_add_key(s, "TVMD", 2, "\x00\x00");  /* VRM diode */
+    applesmc_add_key(s, "TVmS", 2, "\x00\x00");  /* VRM sense */
+    applesmc_add_key(s, "TVSL", 2, "\x00\x00");  /* VRM sense left */
+    applesmc_add_key(s, "TVSR", 2, "\x00\x00");  /* VRM sense right */
+
+    /* mos15: Power/platform (12 keys) */
+    applesmc_add_key(s, "PC0R", 2, "\x00\x00");  /* CPU 0 rail */
+    applesmc_add_key(s, "PCPC", 2, "\x00\x00");  /* CPU package core */
+    applesmc_add_key(s, "PCPG", 2, "\x00\x00");  /* CPU package GPU */
+    applesmc_add_key(s, "PCPT", 2, "\x00\x00");  /* CPU package total */
+    applesmc_add_key(s, "PfCP", 2, "\x00\x00");  /* platform CPU power */
+    applesmc_add_key(s, "PfCT", 2, "\x00\x00");  /* platform CPU temp */
+    applesmc_add_key(s, "PfGT", 2, "\x00\x00");  /* platform GPU temp */
+    applesmc_add_key(s, "PfHT", 2, "\x00\x00");  /* platform HDD temp */
+    applesmc_add_key(s, "PfM0", 2, "\x00\x00");  /* platform memory 0 */
+    applesmc_add_key(s, "PfST", 2, "\x00\x00");  /* platform system temp */
+    applesmc_add_key(s, "PSTR", 2, "\x00\x00");  /* power supply temp rail */
+    applesmc_add_key(s, "PHDC", 2, "\x00\x00");  /* platform HDC */
+
+    /* mos15: Memory/DIMM (6 keys) */
+    applesmc_add_key(s, "DM0P", 2, "\x00\x00");  /* DIMM 0 proximity */
+    applesmc_add_key(s, "DM0S", 2, "\x00\x00");  /* DIMM 0 sensor */
+    applesmc_add_key(s, "DM1P", 2, "\x00\x00");  /* DIMM 1 proximity */
+    applesmc_add_key(s, "DM1S", 2, "\x00\x00");  /* DIMM 1 sensor */
+    applesmc_add_key(s, "MD1R", 2, "\x00\x00");  /* memory DIMM 1 read */
+    applesmc_add_key(s, "MD1W", 2, "\x00\x00");  /* memory DIMM 1 write */
+
+    /* mos15: SMC internal (11 keys) */
+    applesmc_add_key(s, "CLKH", 1, "\x00");  /* clock halt */
+    applesmc_add_key(s, "DICT", 1, "\x00");  /* dictionary */
+    applesmc_add_key(s, "RPlt", 2, "\x00\x00");  /* platform revision */
+    applesmc_add_key(s, "SBFL", 1, "\x00");  /* secure boot flags */
+    applesmc_add_key(s, "VRTC", 2, "\x00\x00");  /* virtual RTC */
+    applesmc_add_key(s, "WKTP", 2, "\x00\x00");  /* wake type */
+    applesmc_add_key(s, "zEPD", 1, "\x00");  /* endpoint descriptor */
+    applesmc_add_key(s, "cePn", 1, "\x00");  /* CE panel */
+    applesmc_add_key(s, "cmDU", 1, "\x00");  /* cm display unit */
+    applesmc_add_key(s, "maNN", 1, "\x00");  /* manufacturer NN */
+    applesmc_add_key(s, "mxT1", 2, "\x00\x00");  /* max temp 1 */
+
+    /* mos15: Sensors/misc (13 keys) */
+    applesmc_add_key(s, "MSAc", 1, "\x00");  /* motion sensor active */
+    applesmc_add_key(s, "MSAf", 1, "\x00");  /* motion sensor filter */
+    applesmc_add_key(s, "MSAg", 1, "\x00");  /* motion sensor gain */
+    applesmc_add_key(s, "MSAi", 1, "\x00");  /* motion sensor interval */
+    applesmc_add_key(s, "MSGA", 1, "\x00");  /* MSG A */
+    applesmc_add_key(s, "MSHP", 1, "\x00");  /* MS HP */
+    applesmc_add_key(s, "MSPA", 1, "\x00");  /* MS PA */
+    applesmc_add_key(s, "MTLV", 1, "\x00");  /* MT level */
+    applesmc_add_key(s, "QCLV", 1, "\x00");  /* Q clevel */
+    applesmc_add_key(s, "QENA", 1, "\x00");  /* Q enable */
+    applesmc_add_key(s, "WIr0", 2, "\x00\x00");  /* WiFi rate 0 */
+    applesmc_add_key(s, "WIw0", 2, "\x00\x00");  /* WiFi write 0 */
+    applesmc_add_key(s, "WIz0", 2, "\x00\x00");  /* WiFi zone 0 */
+
+    /* mos15: Write targets (also need to be readable) */
+    applesmc_add_key(s, "HE0N", 1, "\x00");  /* iGPU power envelope */
+    applesmc_add_key(s, "MSDW", 1, "\x00");  /* MSD write */
+    applesmc_add_key(s, "NTOK", 1, "\x00");  /* notification token */
+
+    /* mos15: Key count — must match actual number of keys above */
+    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x5e"); /* 94 keys */
 }
 
 static void applesmc_unrealize(DeviceState *dev)

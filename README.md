@@ -1,4 +1,4 @@
-# qemu-mos15
+# mos-qemu
 
 QEMU source patches for running macOS 15 (Sequoia) as a guest in QEMU/KVM. Three files modified from upstream QEMU 10.2.2.
 
@@ -22,7 +22,7 @@ curl -sL https://download.qemu.org/qemu-10.2.2.tar.xz | tar xJ -C /tmp
 cd /tmp/qemu-10.2.2
 
 # Apply our patches
-git clone https://github.com/MattJackson/qemu-mos15 /tmp/qemu-mos15
+git clone https://github.com/MattJackson/mos-qemu /tmp/qemu-mos15
 cp /tmp/qemu-mos15/hw/misc/applesmc.c       hw/misc/applesmc.c
 cp /tmp/qemu-mos15/hw/display/vmware_vga.c  hw/display/vmware_vga.c
 cp /tmp/qemu-mos15/hw/usb/dev-hid.c         hw/usb/dev-hid.c
@@ -34,7 +34,7 @@ cp /tmp/qemu-mos15/hw/usb/dev-hid.c         hw/usb/dev-hid.c
 make -j$(nproc)
 ```
 
-For the integrated build, see [docker-macos](https://github.com/MattJackson/docker-macos)'s Dockerfile.
+For the integrated build, see [mos-docker](https://github.com/MattJackson/mos-docker)'s Dockerfile.
 
 ## Build environment — must match the runtime container's libc
 
@@ -62,7 +62,7 @@ file qemu-mos15-alpine
 
 Common Alpine-package gotchas: `dtc-dev` (not `libfdt-dev`); do **not** install `libmount-dev` (not needed and the package doesn't exist in Alpine 3.21).
 
-Full iterate-build-deploy guide: [docker-macos/docs/qemu-mos15-build.md](https://github.com/MattJackson/docker-macos/blob/main/docs/qemu-mos15-build.md).
+Full iterate-build-deploy guide: [docker-macos/docs/qemu-mos15-build.md](https://github.com/MattJackson/mos-docker/blob/main/docs/qemu-mos15-build.md).
 
 ## SMC patch — design notes
 
@@ -96,7 +96,7 @@ These three files are based on QEMU 10.2.2. To target a new QEMU version:
 
 1. Pull the upstream version's source.
 2. Diff each of our three files against upstream's same-version original. Resolve any merge conflicts.
-3. Rebuild + run the [docker-macos test runbook](https://github.com/MattJackson/docker-macos/blob/main/docs/test-runbook.md).
+3. Rebuild + run the [docker-macos test runbook](https://github.com/MattJackson/mos-docker/blob/main/docs/test-runbook.md).
 
 ## Status
 
@@ -109,9 +109,9 @@ These three files are based on QEMU 10.2.2. To target a new QEMU version:
 
 ## Part of the mos suite
 
-- [docker-macos](https://github.com/MattJackson/docker-macos) — orchestration: Docker image, build pipeline, kexts, runbook
-- [mos15-patcher](https://github.com/MattJackson/mos15-patcher) — kernel-side hook framework (Lilu replacement)
-- [opencore-mos15](https://github.com/MattJackson/opencore-mos15) — OpenCore config + patches
+- [mos-docker](https://github.com/MattJackson/mos-docker) — orchestration: Docker image, build pipeline, kexts, runbook
+- [mos-patcher](https://github.com/MattJackson/mos-patcher) — kernel-side hook framework (Lilu replacement)
+- [mos-opencore](https://github.com/MattJackson/mos-opencore) — OpenCore config + patches
 
 ## License
 

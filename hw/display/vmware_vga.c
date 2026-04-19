@@ -218,10 +218,10 @@ enum {
 #define SVGA_FIFO_FLAG_NONE             0
 #define SVGA_FIFO_FLAG_ACCELFRONT       (1 << 0)
 
-/* mos15: Raised to 4K for Retina display support (was 2368x1770) */
+/* mos15: 5K for iMac20,1 Retina parity (stock 2368x1770 → 4K → 5K) */
 #define SVGA_SCRATCH_SIZE               0x8000
-#define SVGA_MAX_WIDTH                  3840
-#define SVGA_MAX_HEIGHT                 2160
+#define SVGA_MAX_WIDTH                  5120
+#define SVGA_MAX_HEIGHT                 2880
 
 #ifdef VERBOSE
 # define GUEST_OS_BASE          0x5001

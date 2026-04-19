@@ -282,8 +282,13 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     case APPLESMC_GET_KEY_BY_INDEX_CMD:
-        /* mos15: Return key name by index. VirtualSMC receives a 4-byte
-         * big-endian index, responds with 4-byte key name. */
+        /* mos15: Return key name by index. macOS sends a 4-byte big-endian
+         * index, expects the 4-byte ASCII key name at that position. The old
+         * implementation returned 4 zeros, which macOS treated as an invalid
+         * key name — kSMCSpuriousData(0x81) — and retried, flooding the
+         * kernel log at ~1,800 errors/sec. Now we walk the keys list and
+         * return the actual key name, or BAD_INDEX (0xb8) to tell macOS
+         * "stop iterating, you've gone past the end." */
         if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
             break;
         }
@@ -292,9 +297,30 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
             s->status = APPLESMC_ST_ACK;
         } else if (s->read_pos == 3) {
             s->key[3] = val;
-            memset(s->data, 0, 4);
-            s->data_len = 4;
-            s->data_pos = 0;
+            uint32_t idx = ((uint8_t)s->key[0] << 24)
+                         | ((uint8_t)s->key[1] << 16)
+                         | ((uint8_t)s->key[2] << 8)
+                         |  (uint8_t)s->key[3];
+            struct AppleSMCData *def;
+            uint32_t i = 0;
+            bool found = false;
+            QLIST_FOREACH(def, &s->data_def, node) {
+                if (i == idx) {
+                    memcpy(s->data, def->key, 4);
+                    s->data_len = 4;
+                    s->data_pos = 0;
+                    found = true;
+                    break;
+                }
+                i++;
+            }
+            if (!found) {
+                s->data_len = 0;
+                s->status_1e = APPLESMC_ST_1E_BAD_INDEX;
+                s->status = APPLESMC_ST_CMD_DONE;
+                s->read_pos++;
+                break;
+            }
             s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
             s->status_1e = APPLESMC_ST_CMD_DONE;
         }
@@ -462,16 +488,20 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "WDTC", 1, "\x00");
 
     /* mos15: GPU temperature sensors — iMac20,1 has dGPU temp reporting.
-     * Returns 0 (no real GPU to measure). Prevents NOEXIST errors. */
-    applesmc_add_key(s, "TGDD", 2, "\x00\x00");
-    applesmc_add_key(s, "TG0P", 2, "\x00\x00");
+     * Values pulled from /Users/mjackson/mos/imac20-1-hardware-reference.md
+     * §6 (real iMac20,1 sensor readings). SP78 format: 16-bit big-endian,
+     * top 8 bits = integer °C, bottom 8 bits = fraction. Returning 0 made
+     * macOS flag these as broken sensors and retry-poll. */
+    applesmc_add_key(s, "TGDD", 2, "\x46\x00");  /* GPU diode: 70°C */
+    applesmc_add_key(s, "TG0P", 2, "\x41\x00");  /* GPU 0 proximity: 65°C */
 
-    /* mos15: Fan control — iMac has 1 fan.
-     * macOS reads fan count and speed during power management init. */
+    /* mos15: Fan control — iMac20,1 has 1 chassis fan.
+     * Real iMac20,1 idle: ~1500 RPM, min 1200, max 3600 (§6).
+     * fpe2 format: raw = RPM << 2. 1500<<2 = 6000 = 0x1770 BE. */
     applesmc_add_key(s, "FNum", 1, "\x01");
-    applesmc_add_key(s, "F0Ac", 2, "\x03\x00");  /* ~768 RPM */
-    applesmc_add_key(s, "F0Mn", 2, "\x02\x00");  /* min RPM */
-    applesmc_add_key(s, "F0Mx", 2, "\x19\x00");  /* max RPM */
+    applesmc_add_key(s, "F0Ac", 2, "\x17\x70");  /* current: 1500 RPM */
+    applesmc_add_key(s, "F0Mn", 2, "\x12\xC0");  /* min:     1200 RPM */
+    applesmc_add_key(s, "F0Mx", 2, "\x38\x40");  /* max:     3600 RPM */
 
     /* mos15: Platform info keys that VirtualSMC looks for */
     applesmc_add_key(s, "MPRO", 1, "\x01");  /* model property */
@@ -490,34 +520,36 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00"); /* display power limit */
     applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00"); /* SMC base address */
 
-    /* mos15: Temperature sensors (27 keys) — all return 0 (no real sensors) */
-    applesmc_add_key(s, "TC0F", 2, "\x00\x00");  /* CPU 0 PECI filtered */
-    applesmc_add_key(s, "TC0P", 2, "\x00\x00");  /* CPU 0 proximity */
-    applesmc_add_key(s, "TCXc", 2, "\x00\x00");  /* CPU PECI core max */
-    applesmc_add_key(s, "TG0F", 2, "\x00\x00");  /* GPU 0 filtered */
-    applesmc_add_key(s, "TG1F", 2, "\x00\x00");  /* GPU 1 filtered */
-    applesmc_add_key(s, "TH0P", 2, "\x00\x00");  /* HDD proximity */
-    applesmc_add_key(s, "TH1A", 2, "\x00\x00");  /* HDD 1 ambient */
-    applesmc_add_key(s, "TH1C", 2, "\x00\x00");  /* HDD 1 core */
-    applesmc_add_key(s, "TH1F", 2, "\x00\x00");  /* HDD 1 filtered */
-    applesmc_add_key(s, "TL0V", 2, "\x00\x00");  /* LCD 0 */
-    applesmc_add_key(s, "TL1V", 2, "\x00\x00");  /* LCD 1 */
-    applesmc_add_key(s, "TM0P", 2, "\x00\x00");  /* memory proximity */
-    applesmc_add_key(s, "TM0V", 2, "\x00\x00");  /* memory VRM */
-    applesmc_add_key(s, "Tp00", 2, "\x00\x00");  /* power supply */
-    applesmc_add_key(s, "Tp2F", 2, "\x00\x00");  /* power supply 2 */
-    applesmc_add_key(s, "Ts0S", 2, "\x00\x00");  /* sensor 0 */
-    applesmc_add_key(s, "TS0V", 2, "\x00\x00");  /* sensor 0 voltage */
-    applesmc_add_key(s, "Ts1S", 2, "\x00\x00");  /* sensor 1 */
-    applesmc_add_key(s, "Ts2S", 2, "\x00\x00");  /* sensor 2 */
-    applesmc_add_key(s, "TB0T", 2, "\x00\x00");  /* battery 0 */
-    applesmc_add_key(s, "TB1T", 2, "\x00\x00");  /* battery 1 */
-    applesmc_add_key(s, "TB2T", 2, "\x00\x00");  /* battery 2 */
-    applesmc_add_key(s, "TA0V", 2, "\x00\x00");  /* ambient 0 */
-    applesmc_add_key(s, "TVMD", 2, "\x00\x00");  /* VRM diode */
-    applesmc_add_key(s, "TVmS", 2, "\x00\x00");  /* VRM sense */
-    applesmc_add_key(s, "TVSL", 2, "\x00\x00");  /* VRM sense left */
-    applesmc_add_key(s, "TVSR", 2, "\x00\x00");  /* VRM sense right */
+    /* mos15: Temperature sensors — realistic iMac20,1 values from §6 of
+     * imac20-1-hardware-reference.md. SP78 format (BE). Zeros were causing
+     * macOS to retry-poll broken sensors. */
+    applesmc_add_key(s, "TC0F", 2, "\x48\x00");  /* CPU 0 PECI filtered: 72°C */
+    applesmc_add_key(s, "TC0P", 2, "\x41\x00");  /* CPU 0 proximity: 65°C */
+    applesmc_add_key(s, "TCXc", 2, "\x55\x00");  /* CPU PECI core max: 85°C */
+    applesmc_add_key(s, "TG0F", 2, "\x41\x00");  /* GPU 0 filtered: 65°C */
+    applesmc_add_key(s, "TG1F", 2, "\x41\x00");  /* GPU 1 filtered: 65°C */
+    applesmc_add_key(s, "TH0P", 2, "\x2E\x00");  /* HDD proximity: 46°C */
+    applesmc_add_key(s, "TH1A", 2, "\x1A\x00");  /* HDD 1 ambient: 26°C */
+    applesmc_add_key(s, "TH1C", 2, "\x2E\x00");  /* HDD 1 core: 46°C */
+    applesmc_add_key(s, "TH1F", 2, "\x2E\x00");  /* HDD 1 filtered: 46°C */
+    applesmc_add_key(s, "TL0V", 2, "\x25\x00");  /* LCD 0: 37°C */
+    applesmc_add_key(s, "TL1V", 2, "\x27\x00");  /* LCD 1: 39°C */
+    applesmc_add_key(s, "TM0P", 2, "\x2D\x00");  /* memory proximity: 45°C */
+    applesmc_add_key(s, "TM0V", 2, "\x2D\x00");  /* memory VRM: 45°C */
+    applesmc_add_key(s, "Tp00", 2, "\x1A\x00");  /* power supply: 26°C */
+    applesmc_add_key(s, "Tp2F", 2, "\x1A\x00");  /* power supply 2: 26°C */
+    applesmc_add_key(s, "Ts0S", 2, "\x1A\x00");  /* sensor 0: 26°C */
+    applesmc_add_key(s, "TS0V", 2, "\x1A\x00");  /* sensor 0 voltage: 26°C */
+    applesmc_add_key(s, "Ts1S", 2, "\x1A\x00");  /* sensor 1: 26°C */
+    applesmc_add_key(s, "Ts2S", 2, "\x1A\x00");  /* sensor 2: 26°C */
+    applesmc_add_key(s, "TB0T", 2, "\x00\x00");  /* no battery (iMac) */
+    applesmc_add_key(s, "TB1T", 2, "\x00\x00");  /* no battery */
+    applesmc_add_key(s, "TB2T", 2, "\x00\x00");  /* no battery */
+    applesmc_add_key(s, "TA0V", 2, "\x1A\x00");  /* ambient 0: 26°C */
+    applesmc_add_key(s, "TVMD", 2, "\x32\x00");  /* VRM diode: 50°C */
+    applesmc_add_key(s, "TVmS", 2, "\x32\x00");  /* VRM sense: 50°C */
+    applesmc_add_key(s, "TVSL", 2, "\x32\x00");  /* VRM sense left: 50°C */
+    applesmc_add_key(s, "TVSR", 2, "\x32\x00");  /* VRM sense right: 50°C */
 
     /* mos15: Power/platform (12 keys) */
     applesmc_add_key(s, "PC0R", 2, "\x00\x00");  /* CPU 0 rail */
@@ -574,8 +606,29 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "MSDW", 1, "\x00");  /* MSD write */
     applesmc_add_key(s, "NTOK", 1, "\x00");  /* notification token */
 
-    /* mos15: Key count — must match actual number of keys above */
-    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x5e"); /* 94 keys */
+    /* mos15: Key count — must match actual number of keys above. Used by
+     * some VirtualSMC paths; kept for compatibility. #KEY below is the
+     * canonical Apple SMC "total keys" key that macOS iterates against. */
+    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x5e");
+
+    /* mos15: #KEY — Apple SMC convention. macOS reads this at boot to know
+     * the total SMC key count, then iterates 0..count-1 via
+     * APPLESMC_GET_KEY_BY_INDEX_CMD. Without it, macOS iterates unbounded
+     * and every out-of-range request floods the kernel log with
+     * kSMCSpuriousData errors (~1800/sec observed before this fix). Count
+     * is computed post-hoc by walking the list; the buffer is static so
+     * its pointer stays valid for the device's lifetime. */
+    {
+        int count = 1;  /* include #KEY itself */
+        struct AppleSMCData *def;
+        QLIST_FOREACH(def, &s->data_def, node) count++;
+        static char numkey_buf[4];
+        numkey_buf[0] = (count >> 24) & 0xff;
+        numkey_buf[1] = (count >> 16) & 0xff;
+        numkey_buf[2] = (count >>  8) & 0xff;
+        numkey_buf[3] =  count        & 0xff;
+        applesmc_add_key(s, "#KEY", 4, numkey_buf);
+    }
 }
 
 static void applesmc_unrealize(DeviceState *dev)

@@ -1,0 +1,180 @@
+/*
+ * QEMU Apple ParavirtualizedGraphics.framework device — PCI variant, Linux C port
+ *
+ * Copyright © 2023–2026 Phil Dennis-Jordan / Amazon / QEMU contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Linux C port of apple-gfx-pci.m. Uses libapplegfx-vulkan for backend
+ * instead of Apple's ParavirtualizedGraphics framework.
+ */
+
+#include "qemu/osdep.h"
+#include "hw/pci/pci_device.h"
+#include "hw/pci/msi.h"
+#include "apple-gfx-linux.h"
+#include "trace.h"
+
+/* PCI device identification */
+#define PG_PCI_VENDOR_ID 0x106b  /* Apple Inc. */
+#define PG_PCI_DEVICE_ID 0x1b30  /* ParavirtualizedGraphics */
+#define PG_PCI_MAX_MSI_VECTORS 64
+#define PG_PCI_BAR_MMIO 0
+
+#define TYPE_APPLE_GFX_PCI "apple-gfx-pci"
+
+OBJECT_DECLARE_SIMPLE_TYPE(AppleGFXPCIState, APPLE_GFX_PCI)
+
+struct AppleGFXPCIState {
+    AppleGFXLinuxState common;
+};
+
+/* Forward declare from apple-gfx-common-linux.c */
+extern const PropertyInfo qdev_prop_apple_gfx_display_mode;
+
+static void
+apple_gfx_pci_init(Object *obj)
+{
+    AppleGFXPCIState *s = APPLE_GFX_PCI(obj);
+
+    /* TODO(Phase-0.B): Option ROM handling on Linux
+     * On macOS, we'd load rom from PGCopyOptionROMURL().
+     * For Linux, either:
+     * - Embed the ROM as a resource in the QEMU binary
+     * - Load from a sysroot path
+     * - Skip ROM (guest may fail to boot without it)
+     */
+
+    apple_gfx_common_init(obj, &s->common);
+}
+
+static void
+apple_gfx_pci_realize(PCIDevice *pci_dev, Error **errp)
+{
+    AppleGFXPCIState *s = APPLE_GFX_PCI(pci_dev);
+    AppleGFXLinuxState *common = &s->common;
+    lagfx_device_descriptor_t device_desc;
+    int ret;
+
+    /* Register MMIO BAR */
+    pci_register_bar(pci_dev, PG_PCI_BAR_MMIO,
+                     PCI_BASE_ADDRESS_SPACE_MEMORY, &common->iomem_gfx);
+
+    /* Initialize MSI-X for interrupt delivery */
+    ret = msi_init(pci_dev, 0x0 /* config offset; 0 = auto */,
+                   PG_PCI_MAX_MSI_VECTORS, true /* msi64bit */,
+                   false /* msi_per_vector_mask */, errp);
+    if (ret != 0) {
+        return;
+    }
+
+    /* Prepare device descriptor for libapplegfx */
+    memset(&device_desc, 0, sizeof(device_desc));
+
+    /* Shell callbacks (memory + interrupt) */
+    device_desc.shell.opaque = common;
+    device_desc.shell.create_task = apple_gfx_create_task;
+    device_desc.shell.destroy_task = apple_gfx_destroy_task;
+    device_desc.shell.map_memory = apple_gfx_map_memory;
+    device_desc.shell.unmap_memory = apple_gfx_unmap_memory;
+    device_desc.shell.read_memory = apple_gfx_read_memory;
+    device_desc.shell.raise_interrupt = apple_gfx_raise_interrupt;
+
+    /* MMIO region size hint (0 = use library default) */
+    device_desc.mmio_region_size = 0;
+
+    /* No pre-existing Vulkan instance */
+    device_desc.shell_vulkan_instance = NULL;
+
+    /* Initialize common device state */
+    if (!apple_gfx_common_realize(common, DEVICE(pci_dev), &device_desc, errp)) {
+        return;
+    }
+
+    trace_apple_gfx_pci_realize();
+}
+
+static void
+apple_gfx_pci_reset(Object *obj, ResetType type)
+{
+    AppleGFXPCIState *s = APPLE_GFX_PCI(obj);
+
+    if (s->common.lagfx_dev) {
+        lagfx_device_reset(s->common.lagfx_dev);
+    }
+
+    trace_apple_gfx_pci_reset();
+}
+
+static void
+apple_gfx_pci_unrealize(DeviceState *dev)
+{
+    AppleGFXPCIState *s = APPLE_GFX_PCI(dev);
+
+    if (s->common.lagfx_disp) {
+        lagfx_display_free(s->common.lagfx_disp);
+        s->common.lagfx_disp = NULL;
+    }
+
+    if (s->common.lagfx_dev) {
+        lagfx_device_free(s->common.lagfx_dev);
+        s->common.lagfx_dev = NULL;
+    }
+
+    if (s->common.surface) {
+        qemu_free_displaysurface(s->common.surface);
+        s->common.surface = NULL;
+    }
+
+    if (s->common.cursor) {
+        cursor_unref(s->common.cursor);
+        s->common.cursor = NULL;
+    }
+}
+
+static const Property apple_gfx_pci_properties[] = {
+    DEFINE_PROP_ARRAY("display-modes", AppleGFXPCIState,
+                      common.num_display_modes, common.display_modes,
+                      qdev_prop_apple_gfx_display_mode, AppleGFXDisplayMode),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void
+apple_gfx_pci_class_init(ObjectClass *klass, const void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *pci = PCI_DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
+
+    rc->phases.hold = apple_gfx_pci_reset;
+    dc->desc = "Apple Paravirtualized Graphics PCI Display Controller (Linux)";
+    dc->hotpluggable = false;
+    dc->unrealize = apple_gfx_pci_unrealize;
+    set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
+
+    pci->vendor_id = PG_PCI_VENDOR_ID;
+    pci->device_id = PG_PCI_DEVICE_ID;
+    pci->class_id = PCI_CLASS_DISPLAY_OTHER;
+    pci->realize = apple_gfx_pci_realize;
+
+    device_class_set_props(dc, apple_gfx_pci_properties);
+}
+
+static const TypeInfo apple_gfx_pci_type = {
+    .name = TYPE_APPLE_GFX_PCI,
+    .parent = TYPE_PCI_DEVICE,
+    .instance_size = sizeof(AppleGFXPCIState),
+    .class_init = apple_gfx_pci_class_init,
+    .instance_init = apple_gfx_pci_init,
+    .interfaces = (const InterfaceInfo[]) {
+        { INTERFACE_PCIE_DEVICE },
+        { },
+    },
+};
+
+static void
+apple_gfx_pci_register_types(void)
+{
+    type_register_static(&apple_gfx_pci_type);
+}
+
+type_init(apple_gfx_pci_register_types)

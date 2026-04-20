@@ -38,79 +38,243 @@ static const AppleGFXDisplayMode apple_gfx_default_modes[] = {
 static Error *apple_gfx_mig_blocker;
 static uint32_t next_pgdisplay_serial_num = 1;
 
-/* ------ Memory Task Management (Phase 1.C stubs) ------ */
+/* ------ Memory Task Management ------ */
+
+/*
+ * Translate a guest-physical range to a host pointer for direct access.
+ *
+ * Returns NULL if the range crosses a non-RAM region, if the region
+ * cannot be accessed directly (e.g. MMIO, ROM with writes, coalesced),
+ * or if the translation is shorter than requested.
+ *
+ * On success *mapping_in_region is set to the backing MemoryRegion; the
+ * caller must memory_region_ref() it if retaining the pointer beyond the
+ * current RCU critical section.
+ *
+ * Semantically equivalent to apple_gfx_host_ptr_for_gpa_range() in the
+ * upstream Darwin/mach port (hw/display/apple-gfx.m).
+ */
+static void *
+apple_gfx_host_ptr_for_gpa_range(uint64_t guest_physical,
+                                 uint64_t length, bool read_only,
+                                 MemoryRegion **mapping_in_region)
+{
+    MemoryRegion *ram_region;
+    char *host_ptr;
+    hwaddr ram_region_offset = 0;
+    hwaddr ram_region_length = length;
+
+    ram_region = address_space_translate(&address_space_memory,
+                                         guest_physical,
+                                         &ram_region_offset,
+                                         &ram_region_length, !read_only,
+                                         MEMTXATTRS_UNSPECIFIED);
+
+    if (!ram_region || ram_region_length < length ||
+        !memory_access_is_direct(ram_region, !read_only,
+                                 MEMTXATTRS_UNSPECIFIED)) {
+        return NULL;
+    }
+
+    host_ptr = memory_region_get_ram_ptr(ram_region);
+    if (!host_ptr) {
+        return NULL;
+    }
+    host_ptr += ram_region_offset;
+    *mapping_in_region = ram_region;
+    return host_ptr;
+}
 
 /*
  * Shell callback: create a reserved virtual address range.
- * TODO(Phase-1.C): Implement memfd_create + mmap backing.
+ *
+ * Wraps lagfx_task_create(), which performs the underlying
+ * mmap(PROT_NONE) reservation (see libapplegfx-vulkan/src/memory/task.c).
+ * Returns the opaque lagfx_task_t handle — libapplegfx passes this back
+ * to us in later map/unmap/destroy calls so we can find the matching
+ * AppleGFXLinuxTask bookkeeping entry.
+ *
+ * On allocation failure returns NULL; libapplegfx treats this as
+ * "task creation failed" and propagates the error through its own
+ * control paths. We cannot raise a QEMU Error** here because the
+ * shell-callback signature is error-code-only.
  */
 static lagfx_task_t *
 apple_gfx_create_task(void *opaque, uint64_t vm_size, void **base_address_out)
 {
     AppleGFXLinuxState *s = opaque;
     AppleGFXLinuxTask *task;
+    lagfx_task_t *lagfx_task;
+    void *base_addr = NULL;
 
-    /* TODO(Phase-1.C): Replace with actual memfd + mmap(MAP_FIXED) logic */
+    /* Reserve the VA range via libapplegfx-vulkan's memfd-backed helper. */
+    lagfx_task = lagfx_task_create((size_t)vm_size, &base_addr);
+    if (!lagfx_task) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "apple-gfx: lagfx_task_create(vm_size=0x%" PRIx64
+                      ") failed\n", vm_size);
+        *base_address_out = NULL;
+        return NULL;
+    }
+
     task = g_new0(AppleGFXLinuxTask, 1);
+    task->lagfx_task = lagfx_task;
+    task->base_address = base_addr;
     task->size = vm_size;
-    task->base_address = NULL; /* Stub; Phase 1.C fills in */
+    task->mapped_regions = g_ptr_array_sized_new(2 /* usually enough */);
 
     QEMU_LOCK_GUARD(&s->task_mutex);
     QTAILQ_INSERT_TAIL(&s->tasks, task, node);
 
-    *base_address_out = task->base_address;
-    trace_apple_gfx_create_task(vm_size, *base_address_out);
+    *base_address_out = base_addr;
+    trace_apple_gfx_create_task(vm_size, base_addr);
 
-    return task->lagfx_task;  /* Opaque; passed back in later calls */
+    return lagfx_task;
 }
 
 static void
 apple_gfx_destroy_task(void *opaque, lagfx_task_t *task)
 {
     AppleGFXLinuxState *s = opaque;
-    AppleGFXLinuxTask *linux_task;
+    AppleGFXLinuxTask *linux_task = NULL;
+    AppleGFXLinuxTask *it;
 
-    /* TODO(Phase-1.C): Implement munmap + memfd cleanup */
-
-    QEMU_LOCK_GUARD(&s->task_mutex);
-    QTAILQ_FOREACH(linux_task, &s->tasks, node) {
-        if (linux_task->lagfx_task == task) {
-            trace_apple_gfx_destroy_task(task, 0);
-            QTAILQ_REMOVE(&s->tasks, linux_task, node);
-            g_free(linux_task);
-            break;
+    WITH_QEMU_LOCK_GUARD(&s->task_mutex) {
+        QTAILQ_FOREACH(it, &s->tasks, node) {
+            if (it->lagfx_task == task) {
+                linux_task = it;
+                QTAILQ_REMOVE(&s->tasks, linux_task, node);
+                break;
+            }
         }
     }
+
+    if (!linux_task) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "apple-gfx: destroy_task for unknown handle %p\n", task);
+        return;
+    }
+
+    trace_apple_gfx_destroy_task(task, linux_task->mapped_regions
+                                 ? linux_task->mapped_regions->len : 0);
+
+    /* Drop MemoryRegion references taken during map_memory. */
+    if (linux_task->mapped_regions) {
+        for (guint i = 0; i < linux_task->mapped_regions->len; ++i) {
+            MemoryRegion *region = g_ptr_array_index(linux_task->mapped_regions, i);
+            memory_region_unref(region);
+        }
+        g_ptr_array_unref(linux_task->mapped_regions);
+    }
+
+    /* Release the VA reservation + memfd backing. */
+    lagfx_task_destroy(task);
+
+    g_free(linux_task);
 }
 
+/*
+ * Shell callback: map one or more guest-physical ranges into the task's
+ * reserved VA range, starting at virtual_offset. Matching Apple's
+ * mapMemory contract, ranges are packed contiguously: virtual_offset
+ * advances by each range's length as we walk the list.
+ *
+ * For each range we translate GPA -> host pointer (via QEMU's address-
+ * space machinery), take a ref on the backing MemoryRegion, and hand
+ * the host pointer to lagfx_task_map_host_memory(). The library handles
+ * the memfd + mmap(MAP_FIXED) mechanics internally.
+ *
+ * Note: the current library implementation copies the host-addr contents
+ * into the memfd on map; a future optimisation may share pages directly
+ * (see libapplegfx-vulkan/src/memory/task.c). From this shell's view the
+ * contract is "after this returns true, guest-visible writes to GPA are
+ * reflected in the task VA range" — verified only for read-mostly ranges
+ * in Phase 1.A.1. Flag for 1.B if we observe guest-writable DMA regions
+ * relying on post-map coherence. (See R3 in phase-1a2-decoder-plan.md.)
+ */
 static bool
 apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
                      uint64_t virtual_offset,
                      const lagfx_physical_range_t *ranges,
                      size_t range_count, bool read_only)
 {
-    /* TODO(Phase-1.C): Implement mmap(MAP_FIXED) remapping of ranges
-     * into the reserved task VA range. Currently stubbed.
-     * Expected: for each range, find QEMU guest RAM, then map it
-     * into task->base_address + virtual_offset using mmap or mremap. */
+    AppleGFXLinuxState *s = opaque;
+    AppleGFXLinuxTask *linux_task = NULL;
+    AppleGFXLinuxTask *it;
+    bool success = true;
 
     trace_apple_gfx_map_memory(task, range_count, virtual_offset, read_only);
 
-    for (size_t i = 0; i < range_count; i++) {
-        trace_apple_gfx_map_memory_range(i,
-                                         ranges[i].guest_physical_address,
-                                         ranges[i].length);
+    RCU_READ_LOCK_GUARD();
+    QEMU_LOCK_GUARD(&s->task_mutex);
+
+    QTAILQ_FOREACH(it, &s->tasks, node) {
+        if (it->lagfx_task == task) {
+            linux_task = it;
+            break;
+        }
+    }
+    if (!linux_task) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "apple-gfx: map_memory for unknown task handle %p\n",
+                      task);
+        return false;
     }
 
-    return true;  /* Stub: Phase 1.C implements actual logic */
+    for (size_t i = 0; i < range_count; i++) {
+        const lagfx_physical_range_t *range = &ranges[i];
+        MemoryRegion *region = NULL;
+        void *host_ptr;
+
+        trace_apple_gfx_map_memory_range(i, range->guest_physical_address,
+                                         range->length);
+
+        host_ptr = apple_gfx_host_ptr_for_gpa_range(range->guest_physical_address,
+                                                    range->length, read_only,
+                                                    &region);
+        if (!host_ptr) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "apple-gfx: map_memory: GPA 0x%" PRIx64
+                          " len 0x%" PRIx64 " not directly accessible\n",
+                          range->guest_physical_address, range->length);
+            success = false;
+            virtual_offset += range->length;
+            continue;
+        }
+
+        if (!g_ptr_array_find(linux_task->mapped_regions, region, NULL)) {
+            g_ptr_array_add(linux_task->mapped_regions, region);
+            memory_region_ref(region);
+        }
+
+        if (!lagfx_task_map_host_memory(task, virtual_offset, host_ptr,
+                                         range->length, read_only)) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "apple-gfx: lagfx_task_map_host_memory failed"
+                          " at task_offset=0x%" PRIx64 " len=0x%" PRIx64 "\n",
+                          virtual_offset, range->length);
+            success = false;
+        }
+
+        virtual_offset += range->length;
+    }
+
+    return success;
 }
 
 static bool
 apple_gfx_unmap_memory(void *opaque, lagfx_task_t *task,
                        uint64_t virtual_offset, uint64_t length)
 {
-    /* TODO(Phase-1.C): Implement munmap or mmap(MAP_FIXED) with /dev/zero */
     trace_apple_gfx_unmap_memory(task, virtual_offset, length);
+
+    if (!lagfx_task_unmap(task, virtual_offset, length)) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "apple-gfx: lagfx_task_unmap failed"
+                      " at offset=0x%" PRIx64 " len=0x%" PRIx64 "\n",
+                      virtual_offset, length);
+        return false;
+    }
     return true;
 }
 

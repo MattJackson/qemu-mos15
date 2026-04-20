@@ -14,12 +14,20 @@
 #include "system/memory.h"
 #include <libapplegfx-vulkan.h>
 
-/* Task-memory management: Linux variant (stub; actual impl in Phase 1.C) */
+/* Task-memory management: Linux variant.
+ *
+ * Each task owns a reserved VA range backed by libapplegfx-vulkan's
+ * memfd-based lagfx_task. When map_memory is invoked, we translate each
+ * guest-physical range to a host pointer via address_space_translate(),
+ * then hand that pointer to lagfx_task_map_host_memory(). We ref the
+ * backing MemoryRegion to keep it alive for the mapping's lifetime.
+ */
 typedef struct AppleGFXLinuxTask {
     QTAILQ_ENTRY(AppleGFXLinuxTask) node;
-    lagfx_task_t *lagfx_task;  /* opaque handle to libapplegfx task */
-    void *base_address;        /* reserved VA base */
-    uint64_t size;
+    lagfx_task_t *lagfx_task;  /* opaque handle from lagfx_task_create */
+    void *base_address;        /* reserved VA base, from lagfx_task_create */
+    uint64_t size;             /* reserved VA range length */
+    GPtrArray *mapped_regions; /* MemoryRegions ref'd for this task */
 } AppleGFXLinuxTask;
 
 typedef QTAILQ_HEAD(, AppleGFXLinuxTask) AppleGFXLinuxTaskList;

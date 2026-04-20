@@ -13,6 +13,7 @@
 #include "qemu/error-report.h"
 #include "hw/pci/pci_device.h"
 #include "hw/pci/msi.h"
+#include "hw/qdev-properties.h"
 #include "apple-gfx-linux.h"
 #include "trace.h"
 

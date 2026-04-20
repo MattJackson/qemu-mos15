@@ -1350,11 +1350,16 @@ static void vmsvga_class_init(ObjectClass *klass, const void *data)
 
     k->realize = pci_vmsvga_realize;
     k->romfile = "vgabios-vmware.bin";
-    k->vendor_id = PCI_VENDOR_ID_VMWARE;
-    k->device_id = SVGA_PCI_DEVICE_ID;
+    /* Phase -1.D: present as Apple paravirt GPU so AppleParavirtGPU.kext
+     * attaches. Device still runs VMware SVGA protocol underneath; if
+     * Apple's driver probes and bails on register-layout mismatch we'll
+     * see the bail in kernel log. Matches AppleParavirtGPU.kext's
+     * IOPCIMatch = "0xEEEE106B" (device=0xEEEE, vendor=0x106B). */
+    k->vendor_id = 0x106b;                 /* was PCI_VENDOR_ID_VMWARE */
+    k->device_id = 0xeeee;                 /* was SVGA_PCI_DEVICE_ID */
     k->class_id = PCI_CLASS_DISPLAY_VGA;
-    k->subsystem_vendor_id = PCI_VENDOR_ID_VMWARE;
-    k->subsystem_id = SVGA_PCI_DEVICE_ID;
+    k->subsystem_vendor_id = 0x106b;       /* was PCI_VENDOR_ID_VMWARE */
+    k->subsystem_id = 0xeeee;              /* was SVGA_PCI_DEVICE_ID */
     device_class_set_legacy_reset(dc, vmsvga_reset);
     dc->vmsd = &vmstate_vmware_vga;
     device_class_set_props(dc, vga_vmware_properties);

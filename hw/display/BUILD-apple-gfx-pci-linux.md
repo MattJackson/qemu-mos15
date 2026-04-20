@@ -14,6 +14,11 @@ The following files in `/Users/mjackson/qemu-mos15/` are overlay/replacement fil
 - `hw/display/meson.build` — QEMU build config (REPLACES upstream file, adds our device)
 - `hw/display/Kconfig` — Device selection config (REPLACES upstream file, adds our device)
 - `hw/display/BUILD-apple-gfx-pci-linux.md` — This file
+- `pc-bios/meson.build` — QEMU pc-bios install list (REPLACES upstream; adds `apple-gfx-pci.rom`)
+- `pc-bios/apple-gfx-pci.rom` — Apple's extracted AppleParavirtEFI.rom (16.5 KB);
+  default option ROM for `apple-gfx-pci`. Source-of-record lives at
+  `mos/paravirt-re/option-rom/AppleParavirtEFI.rom`. Phase 5.X replaces this
+  with an in-tree EDK2 build.
 
 ## Build-time copy pattern
 
@@ -25,34 +30,38 @@ cp /tmp/qemu-mos15-main/hw/display/apple-gfx-pci-linux.c hw/display/ && \
 cp /tmp/qemu-mos15-main/hw/display/apple-gfx-common-linux.c hw/display/ && \
 cp /tmp/qemu-mos15-main/hw/display/apple-gfx-linux.h hw/display/ && \
 cp /tmp/qemu-mos15-main/hw/display/meson.build hw/display/meson.build && \
-cp /tmp/qemu-mos15-main/hw/display/Kconfig hw/display/Kconfig
+cp /tmp/qemu-mos15-main/hw/display/Kconfig hw/display/Kconfig && \
+cp /tmp/qemu-mos15-main/pc-bios/meson.build pc-bios/meson.build && \
+cp /tmp/qemu-mos15-main/pc-bios/apple-gfx-pci.rom pc-bios/apple-gfx-pci.rom
 ```
 
 This follows the existing pattern for `applesmc.c`, `vmware_vga.c`, and `dev-hid.c`.
 
 ## Build configuration
 
-### meson.build changes (12 lines added)
+### meson.build changes
 
-Lines 68-75 in `/Users/mjackson/qemu-mos15/hw/display/meson.build`:
+In `/Users/mjackson/qemu-mos15/hw/display/meson.build`:
 
 ```meson
-# Apple ParavirtualizedGraphics PCI device (Linux C port)
+# Apple ParavirtualizedGraphics PCI device (Linux C port).
+# Declared self-contained here so we do not need to overlay root meson.build.
 if config_all_devices.has_key('CONFIG_APPLE_GFX_PCI_LINUX')
-  applegfx_ss = ss.source_set()
-  applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
-    files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
-    libapplegfx_vulkan,
-  ])
-  hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
+  libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: false)
+  if libapplegfx_vulkan.found()
+    applegfx_ss = ss.source_set()
+    applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
+      files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
+      libapplegfx_vulkan,
+    ])
+    hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
+  endif
 endif
 ```
 
-The device is **gated on** `libapplegfx_vulkan` dependency, declared at root `meson.build`:
-
-```meson
-libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: false)
-```
+The dependency is declared inline rather than at root `meson.build` so we
+avoid overlaying a huge upstream file. `required: false` means missing
+libapplegfx-vulkan silently drops the device.
 
 ### Kconfig changes (8 lines added)
 
@@ -63,12 +72,17 @@ config APPLE_GFX_PCI_LINUX
     bool "Apple ParavirtualizedGraphics PCI device (Linux)"
     default y if PCI_DEVICES
     depends on PCI
-    depends on LIBAPPLEGFX_VULKAN
     help
       Enable the Linux-compatible Apple ParavirtualizedGraphics PCI
-      device. Requires libapplegfx-vulkan library with lavapipe
-      Vulkan backend.
+      device. Requires libapplegfx-vulkan library with lavapipe Vulkan
+      backend. The runtime dependency is gated at the meson level —
+      if libapplegfx-vulkan is not found via pkg-config, the device
+      source files are dropped from the build even if this symbol is y.
 ```
+
+Note: we intentionally do NOT add `depends on LIBAPPLEGFX_VULKAN` because
+the matching proxy symbol would have to live in `Kconfig.host`, which would
+require yet another overlay file. The meson-level gate is sufficient.
 
 ## Dockerfile changes required
 
@@ -103,7 +117,9 @@ RUN cd /tmp/qemu-${QEMU_VERSION} && \
     cp /tmp/qemu-mos15-main/hw/display/apple-gfx-common-linux.c hw/display/ && \
     cp /tmp/qemu-mos15-main/hw/display/apple-gfx-linux.h hw/display/ && \
     cp /tmp/qemu-mos15-main/hw/display/meson.build hw/display/meson.build && \
-    cp /tmp/qemu-mos15-main/hw/display/Kconfig hw/display/Kconfig
+    cp /tmp/qemu-mos15-main/hw/display/Kconfig hw/display/Kconfig && \
+    cp /tmp/qemu-mos15-main/pc-bios/meson.build pc-bios/meson.build && \
+    cp /tmp/qemu-mos15-main/pc-bios/apple-gfx-pci.rom pc-bios/apple-gfx-pci.rom
 ```
 
 ### Runtime stage changes (~5 lines)

@@ -20,6 +20,18 @@
 #define PG_PCI_MAX_MSI_VECTORS 64
 #define PG_PCI_BAR_MMIO 0
 
+/*
+ * Default option ROM filename, installed into qemu_datadir (pc-bios/) by the
+ * build system. QEMU's PCI core looks this up via qemu_find_file() at realize
+ * time and maps it into a ROM BAR for us. Users can override at the CLI with
+ * `-device apple-gfx-pci,romfile=/path/to/other.rom` — the `romfile` property
+ * is inherited from the base PCIDevice class (see hw/pci/pci.c).
+ *
+ * Phase 1.E: Apple's AppleParavirtEFI.rom is shipped during dev; Phase 5.X
+ * replaces with own EDK2 build.
+ */
+#define PG_PCI_DEFAULT_ROMFILE "apple-gfx-pci.rom"
+
 #define TYPE_APPLE_GFX_PCI "apple-gfx-pci"
 
 OBJECT_DECLARE_SIMPLE_TYPE(AppleGFXPCIState, APPLE_GFX_PCI)
@@ -36,12 +48,11 @@ apple_gfx_pci_init(Object *obj)
 {
     AppleGFXPCIState *s = APPLE_GFX_PCI(obj);
 
-    /* TODO(Phase-0.B): Option ROM handling on Linux
-     * On macOS, we'd load rom from PGCopyOptionROMURL().
-     * For Linux, either:
-     * - Embed the ROM as a resource in the QEMU binary
-     * - Load from a sysroot path
-     * - Skip ROM (guest may fail to boot without it)
+    /*
+     * Option ROM loading is driven by PCIDeviceClass::romfile (set in
+     * class_init below). QEMU's PCI core handles the BAR allocation and
+     * file lookup during apple_gfx_pci_realize() / pci_qdev_realize().
+     * No per-instance setup is needed here.
      */
 
     apple_gfx_common_init(obj, &s->common);
@@ -155,6 +166,18 @@ apple_gfx_pci_class_init(ObjectClass *klass, const void *data)
     pci->device_id = PG_PCI_DEVICE_ID;
     pci->class_id = PCI_CLASS_DISPLAY_OTHER;
     pci->realize = apple_gfx_pci_realize;
+
+    /*
+     * Phase 1.E: Apple's AppleParavirtEFI.rom is shipped during dev;
+     * Phase 5.X replaces with own EDK2 build.
+     *
+     * This sets the default ROM. It can be overridden at instantiation via
+     *   -device apple-gfx-pci,romfile=/path/to/alt.rom
+     * The `romfile` property is registered on the base PCIDevice class
+     * (see DEFINE_PROP_STRING("romfile", ...) in hw/pci/pci.c), and the PCI
+     * core loads it via qemu_find_file(QEMU_FILE_TYPE_BIOS, ...) at realize.
+     */
+    pci->romfile = PG_PCI_DEFAULT_ROMFILE;
 
     device_class_set_props(dc, apple_gfx_pci_properties);
 }

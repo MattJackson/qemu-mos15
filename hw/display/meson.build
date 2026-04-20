@@ -64,14 +64,21 @@ system_ss.add(when: 'CONFIG_ATI_VGA', if_true: [files('ati.c', 'ati_2d.c', 'ati_
 system_ss.add(when: [pvg, 'CONFIG_MAC_PVG_PCI'],     if_true: [files('apple-gfx.m', 'apple-gfx-pci.m')])
 system_ss.add(when: [pvg, 'CONFIG_MAC_PVG_MMIO'],    if_true: [files('apple-gfx.m', 'apple-gfx-mmio.m')])
 
-# Apple ParavirtualizedGraphics PCI device (Linux C port)
+# Apple ParavirtualizedGraphics PCI device (Linux C port).
+# Declared self-contained here so we do not need to overlay root meson.build.
+# If libapplegfx-vulkan is not present on the build host, the device silently
+# drops out of the build (required: false). Kconfig default-yes-on-PCI_DEVICES
+# is harmless in that case — the meson gate keeps the source files out.
 if config_all_devices.has_key('CONFIG_APPLE_GFX_PCI_LINUX')
-  applegfx_ss = ss.source_set()
-  applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
-    files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
-    libapplegfx_vulkan,
-  ])
-  hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
+  libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: false)
+  if libapplegfx_vulkan.found()
+    applegfx_ss = ss.source_set()
+    applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
+      files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
+      libapplegfx_vulkan,
+    ])
+    hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
+  endif
 endif
 
 if config_all_devices.has_key('CONFIG_VIRTIO_GPU')

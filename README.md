@@ -1,6 +1,11 @@
 # mos-qemu
 
-QEMU source patches for running macOS 15 (Sequoia) as a guest in QEMU/KVM. Three files modified from upstream QEMU 10.2.2.
+QEMU source patches for running macOS 15 (Sequoia) as a guest in
+QEMU/KVM. Three files modified from upstream QEMU 10.2.2, plus a
+new `hw/display/apple-gfx-pci-linux` device that implements the
+host side of Apple's **ParavirtualizedGraphics** protocol (the
+`PGDevice` / `PGShellCallbacks` shape) on Linux, backed by
+[libapplegfx-vulkan](https://github.com/MattJackson/libapplegfx-vulkan).
 
 > **Status: v0.5 — usable but barebones.** Verified end-to-end on macOS 15.7.5 inside KVM on Linux. Patches are tracked here as standalone files and overlay-copied into a QEMU source tree before configure/make.
 
@@ -112,6 +117,13 @@ These three files are based on QEMU 10.2.2. To target a new QEMU version:
 - [mos-docker](https://github.com/MattJackson/mos-docker) — orchestration: Docker image, build pipeline, kexts, runbook
 - [mos-patcher](https://github.com/MattJackson/mos-patcher) — kernel-side hook framework (Lilu replacement)
 - [mos-opencore](https://github.com/MattJackson/mos-opencore) — OpenCore config + patches
+- [libapplegfx-vulkan](https://github.com/MattJackson/libapplegfx-vulkan) — Linux `ParavirtualizedGraphics` (PGDevice) host library; consumed by this repo's `hw/display/apple-gfx-pci-linux` device
+
+## Keywords
+
+macOS QEMU Linux, macOS 15 Sequoia QEMU, applesmc QEMU,
+Apple ParavirtualizedGraphics QEMU device, PGDevice Linux,
+apple-gfx-pci Linux port, paravirt GPU Linux, iMac20,1 VM.
 
 ## License
 

@@ -9,7 +9,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu/log.h"
 #include "qemu/error-report.h"
 #include "hw/pci/pci_device.h"
 #include "hw/pci/msi.h"
@@ -130,13 +129,7 @@ apple_gfx_pci_realize(PCIDevice *pci_dev, Error **errp)
         return;
     }
 
-    /*
-     * Upstream hw/display/trace-events does not define apple_gfx_pci_realize
-     * (the Darwin port inlined this into apple_gfx_common_init tracing).
-     * Rather than carry a full trace-events overlay for two PCI-only trace
-     * points, log via qemu_log_mask(LOG_TRACE). See M1 dry-run audit.
-     */
-    qemu_log_mask(LOG_TRACE, "apple-gfx-pci: realize\n");
+    trace_apple_gfx_pci_realize();
 }
 
 static void
@@ -148,7 +141,7 @@ apple_gfx_pci_reset(Object *obj, ResetType type)
         lagfx_device_reset(s->common.lagfx_dev);
     }
 
-    qemu_log_mask(LOG_TRACE, "apple-gfx-pci: reset\n");
+    trace_apple_gfx_pci_reset();
 }
 
 static void
@@ -190,7 +183,6 @@ static const Property apple_gfx_pci_properties[] = {
      * See paravirt-re/gpu-cores-implementation-spec.md.
      */
     DEFINE_PROP_UINT32("gpu_cores", AppleGFXPCIState, common.gpu_cores, 0),
-    DEFINE_PROP_END_OF_LIST(),
 };
 
 static void

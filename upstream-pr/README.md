@@ -25,7 +25,7 @@ on the library packaging path (system package / meson
 subproject / vendored submodule — see Package B's
 `LIBAPPLEGFX_DEPENDENCY.md`). Precedent for upstream fork
 submissions from this tree: our OpenCorePkg submission
-(acidanthera/OpenCorePkg PR, similar hand-off shape) — the
+([acidanthera/OpenCorePkg PR #600](https://github.com/acidanthera/OpenCorePkg/pull/600), similar hand-off shape) — the
 next step for B is a discussion with the upstream maintainer
 on which of the three library-packaging options they prefer
 to review.

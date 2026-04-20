@@ -9,6 +9,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "hw/pci/pci_device.h"
 #include "hw/pci/msi.h"
 #include "apple-gfx-linux.h"
@@ -101,7 +102,13 @@ apple_gfx_pci_realize(PCIDevice *pci_dev, Error **errp)
         return;
     }
 
-    trace_apple_gfx_pci_realize();
+    /*
+     * Upstream hw/display/trace-events does not define apple_gfx_pci_realize
+     * (the Darwin port inlined this into apple_gfx_common_init tracing).
+     * Rather than carry a full trace-events overlay for two PCI-only trace
+     * points, log via qemu_log_mask(LOG_TRACE). See M1 dry-run audit.
+     */
+    qemu_log_mask(LOG_TRACE, "apple-gfx-pci: realize\n");
 }
 
 static void
@@ -113,7 +120,7 @@ apple_gfx_pci_reset(Object *obj, ResetType type)
         lagfx_device_reset(s->common.lagfx_dev);
     }
 
-    trace_apple_gfx_pci_reset();
+    qemu_log_mask(LOG_TRACE, "apple-gfx-pci: reset\n");
 }
 
 static void

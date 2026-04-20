@@ -99,7 +99,7 @@ apple_gfx_host_ptr_for_gpa_range(uint64_t guest_physical,
  * control paths. We cannot raise a QEMU Error** here because the
  * shell-callback signature is error-code-only.
  */
-static lagfx_task_t *
+lagfx_task_t *
 apple_gfx_create_task(void *opaque, uint64_t vm_size, void **base_address_out)
 {
     AppleGFXLinuxState *s = opaque;
@@ -132,7 +132,7 @@ apple_gfx_create_task(void *opaque, uint64_t vm_size, void **base_address_out)
     return lagfx_task;
 }
 
-static void
+void
 apple_gfx_destroy_task(void *opaque, lagfx_task_t *task)
 {
     AppleGFXLinuxState *s = opaque;
@@ -192,7 +192,7 @@ apple_gfx_destroy_task(void *opaque, lagfx_task_t *task)
  * in Phase 1.A.1. Flag for 1.B if we observe guest-writable DMA regions
  * relying on post-map coherence. (See R3 in phase-1a2-decoder-plan.md.)
  */
-static bool
+bool
 apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
                      uint64_t virtual_offset,
                      const lagfx_physical_range_t *ranges,
@@ -262,7 +262,7 @@ apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
     return success;
 }
 
-static bool
+bool
 apple_gfx_unmap_memory(void *opaque, lagfx_task_t *task,
                        uint64_t virtual_offset, uint64_t length)
 {
@@ -278,7 +278,7 @@ apple_gfx_unmap_memory(void *opaque, lagfx_task_t *task,
     return true;
 }
 
-static bool
+bool
 apple_gfx_read_memory(void *opaque, uint64_t guest_physical_address,
                       uint64_t length, void *dst)
 {
@@ -312,7 +312,7 @@ apple_gfx_raise_interrupt_bh(void *opaque)
     g_free(job);
 }
 
-static void
+void
 apple_gfx_raise_interrupt(void *opaque, uint32_t vector)
 {
     AppleGFXInterruptJob *job;

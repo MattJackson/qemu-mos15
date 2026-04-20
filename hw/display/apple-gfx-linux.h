@@ -88,4 +88,21 @@ bool apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
 uint64_t apple_gfx_mmio_read(void *opaque, hwaddr offset, unsigned size);
 void apple_gfx_mmio_write(void *opaque, hwaddr offset, uint64_t val, unsigned size);
 
+/* libapplegfx shell callbacks implemented in apple-gfx-common-linux.c.
+ * These are populated into lagfx_device_descriptor_t::shell by the PCI (and
+ * future MMIO) transport variants, so their addresses must be visible across
+ * translation units — hence extern here instead of file-local static. */
+lagfx_task_t *apple_gfx_create_task(void *opaque, uint64_t vm_size,
+                                    void **base_address_out);
+void apple_gfx_destroy_task(void *opaque, lagfx_task_t *task);
+bool apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
+                          uint64_t virtual_offset,
+                          const lagfx_physical_range_t *ranges,
+                          size_t range_count, bool read_only);
+bool apple_gfx_unmap_memory(void *opaque, lagfx_task_t *task,
+                            uint64_t virtual_offset, uint64_t length);
+bool apple_gfx_read_memory(void *opaque, uint64_t guest_physical_address,
+                           uint64_t length, void *dst);
+void apple_gfx_raise_interrupt(void *opaque, uint32_t vector);
+
 #endif /* QEMU_APPLE_GFX_LINUX_H */

@@ -1,0 +1,34 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 2/8] hw/display/apple-gfx-linux: memory/task plumbing
+
+Implement the four shell callbacks for guest-memory tasks:
+
+  * `apple_gfx_create_task` - wraps `lagfx_task_create`
+    (which performs the underlying `mmap(PROT_NONE)` range
+    reservation in libapplegfx-vulkan) and inserts an
+    `AppleGFXLinuxTask` into the per-device task list.
+  * `apple_gfx_destroy_task` - finds the task by opaque
+    handle, drops the MemoryRegion refs taken during
+    `map_memory`, frees the host-side bookkeeping, and
+    calls `lagfx_task_destroy`.
+  * `apple_gfx_map_memory` - translates each
+    `lagfx_physical_range_t` to a host pointer via
+    `address_space_translate()`, takes a ref on the backing
+    `MemoryRegion`, and hands the host pointer to
+    `lagfx_task_map_host_memory()`.
+  * `apple_gfx_unmap_memory` - straightforward forward to
+    `lagfx_task_unmap`.
+
+Host-pointer translation is done under
+`RCU_READ_LOCK_GUARD()`; the task list is protected by its
+own mutex. On translation failure (non-RAM region, size
+shortfall, or non-direct access) the range is skipped and
+the callback returns `false` while still advancing
+`virtual_offset` for the remaining ranges - the library's
+contract is that a partial failure is reported but the
+rest of the batch is processed.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/apple-gfx-common-linux.c | ~170 insertions(+)
+ 1 file changed, ~170 insertions(+)

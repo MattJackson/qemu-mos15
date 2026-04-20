@@ -1,0 +1,54 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 4/4] hw/display/vmware_vga: advertise 8BIT_EMULATION,
+ ALPHA_BLEND and ALPHA_CURSOR
+
+Modern VMware SVGA II guest drivers expect the 8-bit palette
+emulation capability (`SVGA_CAP_8BIT_EMULATION`, bit 8) and
+the two alpha-blending cursor bits (`SVGA_CAP_ALPHA_BLEND`
+bit 13, `SVGA_CAP_ALPHA_CURSOR` bit 9) to be advertised by
+any device that presents a modern feature set. The upstream
+device already implements the machinery behind all three:
+
+  * 8-bit palette is handled by the legacy vga core that
+    vmware_vga extends, so advertising 8BIT_EMULATION is a
+    pure capability-bit change.
+  * ALPHA_CURSOR is satisfied by `SVGA_CMD_DEFINE_ALPHA_CURSOR`
+    which the FIFO command dispatcher already handles.
+  * ALPHA_BLEND is a generic "host supports alpha blending on
+    ARGB surfaces" bit; macOS's driver uses it to gate the
+    ARGB cursor upload path.
+
+Without these bits, macOS's vmware_vga driver falls back to
+the monochrome cursor path and the guest cursor flickers or
+renders without anti-aliasing.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/vmware_vga.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+--- a/hw/display/vmware_vga.c
++++ b/hw/display/vmware_vga.c
+@@ -896,7 +896,18 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
+         break;
+
+     case SVGA_REG_CAPABILITIES:
+-        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO;
++        /*
++         * Advertise the capability bits that modern VMware SVGA II guest
++         * drivers (Linux vmwgfx, macOS 10.13+, Windows 10+) expect at a
++         * minimum. PITCHLOCK lets the guest pin the scanout pitch across
++         * mode changes; EXTENDED_FIFO exposes the pitchlock/fence/3d-hw
++         * FIFO registers above SVGA_FIFO_STOP; 8BIT_EMULATION advertises
++         * legacy palette support; ALPHA_BLEND / ALPHA_CURSOR are
++         * required for the 32-bit ARGB hardware cursor path.
++         */
++        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO |
++               SVGA_CAP_8BIT_EMULATION | SVGA_CAP_ALPHA_BLEND |
++               SVGA_CAP_ALPHA_CURSOR;
+ #ifdef HW_RECT_ACCEL
+         caps |= SVGA_CAP_RECT_COPY;
+ #endif
+--
+2.47.0
+

@@ -1,0 +1,98 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 4/4] hw/misc/applesmc: add boot-required keys
+ HE0N/HE2N/WDTC and platform identity
+
+macOS reads a handful of additional SMC keys during early boot
+and during graphics power-management init. Missing keys return
+zero (patch 1) which is handled, but the following are worth
+having concrete definitions for:
+
+  * HE0N, HE2N - iGPU / dGPU power-enable. The AGPM driver
+    reads these at init; without them macOS can enter a retry
+    cascade on dynamic wallpaper changes. The drivers themselves
+    write the final value, so the boot-time default of 0 is
+    correct.
+  * WDTC - watchdog timer control. Queried during early boot;
+    an unanswered query produces a cluster of SMCWDT errors.
+  * MPRO, MPRD, LGPB, BSLN, EPCI, BEMB - platform-identity keys
+    exposed by VirtualSMC and consumed by X86PlatformPlugin.
+  * OSWD, MSSW, RGEN, DPLM, $Adr - probed by the boot-time SMC
+    client; $Num is kept as a VirtualSMC-compatible total-keys
+    key alongside the canonical #KEY added in patch 2.
+  * MSDW, NTOK - macOS sometimes writes these; declare them so
+    subsequent reads of the written value work through the
+    standard AppleSMCData storage.
+  * CLKH, DICT, RPlt, SBFL, VRTC, WKTP - SMC-internal
+    bookkeeping keys that are polled by the SMC client but
+    carry no meaningful value on a VM.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/misc/applesmc.c | 59 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+--- a/hw/misc/applesmc.c
++++ b/hw/misc/applesmc.c
+@@ -561,8 +561,59 @@
+     applesmc_add_key(s, "PfST", 2, "\x00\x00");
+     applesmc_add_key(s, "PSTR", 2, "\x00\x00");
+     applesmc_add_key(s, "PHDC", 2, "\x00\x00");
++
++    /*
++     * GPU power-management keys. Without HE2N the AGPM driver reads
++     * NOEXIST, errors out (0x82) and hangs the system on dynamic
++     * wallpaper changes. The driver itself sets the value to 1 on
++     * start, so the boot default of 0 is correct.
++     */
++    applesmc_add_key(s, "HE2N", 1, "\x00");
+ 
+     /*
++     * Watchdog timer control. Queried by macOS during early boot; an
++     * unanswered query produces a cluster of SMCWDT errors per boot.
++     */
++    applesmc_add_key(s, "WDTC", 1, "\x00");
++
++    /* Platform-identity keys also provided by VirtualSMC. */
++    applesmc_add_key(s, "MPRO", 1, "\x01");
++    applesmc_add_key(s, "MPRD", 1, "\x00");
++    applesmc_add_key(s, "LGPB", 1, "\x00");
++
++    /* CPU/power keys consumed by X86PlatformPlugin. */
++    applesmc_add_key(s, "BSLN", 1, "\x00");
++    applesmc_add_key(s, "EPCI", 4, "\x00\x00\x00\x00");
++    applesmc_add_key(s, "BEMB", 1, "\x01");
++
++    /* Keys read by the boot-time SMC probe. */
++    applesmc_add_key(s, "OSWD", 2, "\x00\x00");
++    applesmc_add_key(s, "MSSW", 1, "\x00");
++    applesmc_add_key(s, "RGEN", 1, "\x02");
++    applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00");
++    applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00");
++
++    /* SMC internal bookkeeping. */
++    applesmc_add_key(s, "CLKH", 1, "\x00");
++    applesmc_add_key(s, "DICT", 1, "\x00");
++    applesmc_add_key(s, "RPlt", 2, "\x00\x00");
++    applesmc_add_key(s, "SBFL", 1, "\x00");
++    applesmc_add_key(s, "VRTC", 2, "\x00\x00");
++    applesmc_add_key(s, "WKTP", 2, "\x00\x00");
++
++    /* Write targets that must also be readable. */
++    applesmc_add_key(s, "HE0N", 1, "\x00");
++    applesmc_add_key(s, "MSDW", 1, "\x00");
++    applesmc_add_key(s, "NTOK", 1, "\x00");
++
++    /*
++     * VirtualSMC-compatible total-keys key. Kept for compatibility with
++     * drivers that look for $Num; the canonical Apple #KEY added in an
++     * earlier patch is what macOS actually iterates against.
++     */
++    applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x5e");
++
++    /*
+      * #KEY - Apple SMC convention for "total key count". macOS reads
+      * this at boot and iterates 0..count-1 via
+      * APPLESMC_GET_KEY_BY_INDEX_CMD. Without it, macOS falls back to
+--
+2.47.0
+

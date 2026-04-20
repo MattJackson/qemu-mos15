@@ -1,0 +1,57 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 2/4] hw/misc/applesmc: add #KEY total-count key
+
+On real Apple hardware the SMC firmware exposes a special key
+#KEY whose value is a 4-byte big-endian count of all keys
+(including #KEY itself). macOS uses this at boot as the upper
+bound for its GET_KEY_BY_INDEX_CMD iteration: read #KEY, then
+walk 0..count-1.
+
+Without #KEY the macOS AppleSMC driver falls back to iterating
+until it gets a BAD_INDEX reply. With patch 1 of this series in
+place that fallback works, but boot-log noise and guest kernel
+wake-ups are both reduced noticeably by providing the expected
+key.
+
+The count is computed by walking the data_def list at realize
+time; the backing storage is function-static so the pointer
+remains valid for the device lifetime.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/misc/applesmc.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+--- a/hw/misc/applesmc.c
++++ b/hw/misc/applesmc.c
+@@ -495,6 +495,27 @@
+     applesmc_add_key(s, "NATJ", 1, "\0");
+     applesmc_add_key(s, "MSSP", 1, "\0");
+     applesmc_add_key(s, "MSSD", 1, "\0x3");
++
++    /*
++     * #KEY - Apple SMC convention for "total key count". macOS reads
++     * this at boot and iterates 0..count-1 via
++     * APPLESMC_GET_KEY_BY_INDEX_CMD. Without it, macOS falls back to
++     * iterating unbounded until it gets a BAD_INDEX reply; providing
++     * the key is cheap and avoids that fallback path. Count is
++     * computed by walking the list; the buffer is function-static so
++     * the pointer stays valid for the device's lifetime.
++     */
++    {
++        int count = 1;  /* include #KEY itself */
++        struct AppleSMCData *def;
++        QLIST_FOREACH(def, &s->data_def, node) count++;
++        static char numkey_buf[4];
++        numkey_buf[0] = (count >> 24) & 0xff;
++        numkey_buf[1] = (count >> 16) & 0xff;
++        numkey_buf[2] = (count >>  8) & 0xff;
++        numkey_buf[3] =  count        & 0xff;
++        applesmc_add_key(s, "#KEY", 4, numkey_buf);
++    }
+ }
+ 
+ static void applesmc_unrealize(DeviceState *dev)
+--
+2.47.0
+

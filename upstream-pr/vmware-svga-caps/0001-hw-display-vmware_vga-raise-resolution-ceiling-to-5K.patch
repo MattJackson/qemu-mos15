@@ -1,0 +1,52 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 1/4] hw/display/vmware_vga: raise resolution ceiling to
+ 5K (5120x2880)
+
+`SVGA_MAX_WIDTH` and `SVGA_MAX_HEIGHT` have been 2368x1770
+since the device model's introduction. These constants gate
+the guest's `SVGA_REG_MAX_WIDTH` / `SVGA_REG_MAX_HEIGHT`
+responses; modern Linux/vmwgfx and macOS vmware_vga drivers
+reject any larger requested mode with `invalid resolution` so
+the device caps at effectively 1440p even on boards with
+enough VRAM for higher modes.
+
+The comment on the defines reads:
+
+    /* These values can probably be changed arbitrarily.  */
+
+Raise the caps to 5K (5120x2880). The VRAM BAR still bounds
+what the guest can actually allocate, so this is a mode-
+validation upper bound only - guests with a 16 MB default
+vgamem still see the VRAM exhaustion error they always did
+when requesting >2K modes, they just no longer hit the
+software-side cap first.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/vmware_vga.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+--- a/hw/display/vmware_vga.c
++++ b/hw/display/vmware_vga.c
+@@ -218,10 +218,15 @@
+ #define SVGA_FIFO_FLAG_NONE             0
+ #define SVGA_FIFO_FLAG_ACCELFRONT       (1 << 0)
+
+-/* These values can probably be changed arbitrarily.  */
++/*
++ * Raise the software-side geometry cap to 5K (5120x2880) so modern
++ * macOS/Linux guests can negotiate Retina-class modes. The VRAM BAR
++ * still bounds what the guest can actually allocate; this is an upper
++ * bound for mode validation.
++ */
+ #define SVGA_SCRATCH_SIZE               0x8000
+-#define SVGA_MAX_WIDTH                  2368
+-#define SVGA_MAX_HEIGHT                 1770
++#define SVGA_MAX_WIDTH                  5120
++#define SVGA_MAX_HEIGHT                 2880
+
+ #ifdef VERBOSE
+ # define GUEST_OS_BASE          0x5001
+--
+2.47.0
+

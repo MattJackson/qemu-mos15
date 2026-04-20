@@ -1,0 +1,65 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 7/8] hw/display/apple-gfx-linux: meson + Kconfig wiring
+
+Add `CONFIG_APPLE_GFX_PCI_LINUX` to `hw/display/Kconfig` with
+`default y if PCI_DEVICES`, depending on PCI. Add the meson
+gate in `hw/display/meson.build` under a new
+`apple_gfx_pci_linux` module set. The meson rule declares the
+`libapplegfx-vulkan` dependency with `required: false`, so if
+the library is not installed on the build host the device
+silently drops out of the build even when the Kconfig symbol
+is set - matching how other optional-dep devices (virgl,
+rutabaga) gate themselves.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/Kconfig      | 10 ++++++++++
+ hw/display/meson.build  | 16 ++++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+--- a/hw/display/Kconfig
++++ b/hw/display/Kconfig
+@@ -150,3 +150,13 @@ config MAC_PVG_PCI
+     bool
+     depends on MAC_PVG && PCI
+     default y if PCI_DEVICES
++
++config APPLE_GFX_PCI_LINUX
++    bool "Apple ParavirtualizedGraphics PCI device (Linux)"
++    default y if PCI_DEVICES
++    depends on PCI
++    help
++      Enable the Linux-compatible Apple ParavirtualizedGraphics PCI
++      device. Requires libapplegfx-vulkan library with lavapipe Vulkan
++      backend. The runtime dependency is gated at the meson level - if
++      libapplegfx-vulkan is not found via pkg-config, the device
++      source files are dropped from the build even if this symbol is y.
+--- a/hw/display/meson.build
++++ b/hw/display/meson.build
+@@ -64,6 +64,22 @@ system_ss.add(when: 'CONFIG_ATI_VGA', if_true: [files('ati.c', 'ati_2d.c', 'ati_
+ system_ss.add(when: [pvg, 'CONFIG_MAC_PVG_PCI'],     if_true: [files('apple-gfx.m', 'apple-gfx-pci.m')])
+ system_ss.add(when: [pvg, 'CONFIG_MAC_PVG_MMIO'],    if_true: [files('apple-gfx.m', 'apple-gfx-mmio.m')])
+
++# Apple ParavirtualizedGraphics PCI device (Linux C port).
++# The runtime dependency is gated at the meson level: if libapplegfx-vulkan
++# is not present on the build host, the device silently drops out of the
++# build (required: false). The Kconfig default-yes-on-PCI_DEVICES is
++# harmless in that case - the meson gate keeps the source files out.
++if config_all_devices.has_key('CONFIG_APPLE_GFX_PCI_LINUX')
++  libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: false)
++  if libapplegfx_vulkan.found()
++    applegfx_ss = ss.source_set()
++    applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
++      files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
++      libapplegfx_vulkan,
++    ])
++    hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
++  endif
++endif
++
+ if config_all_devices.has_key('CONFIG_VIRTIO_GPU')
+   virtio_gpu_ss = ss.source_set()
+   virtio_gpu_ss.add(when: 'CONFIG_VIRTIO_GPU',
+--
+2.47.0
+

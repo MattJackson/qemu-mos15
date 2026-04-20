@@ -1,0 +1,27 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 5/8] hw/display/apple-gfx-linux: PCI device wrapper
+
+Complete `apple-gfx-pci-linux.c` with the PCI realize path.
+The PCI IDs match Apple's ParavirtualizedGraphics device
+(vendor 0x106b, device 0x1b30), matching the existing
+`TYPE_APPLE_GFX_PCI` in the macOS sibling.
+
+`apple_gfx_pci_realize`:
+
+  * Registers BAR0 for MMIO (range allocated by
+    `apple_gfx_common_init`).
+  * Sets up MSI-X for interrupt delivery
+    (`PG_PCI_MAX_MSI_VECTORS = 64`, matching the sibling).
+  * Populates the `lagfx_device_descriptor_t` shell with the
+    six callbacks from patches 2-3.
+  * Delegates to `apple_gfx_common_realize` which calls
+    `lagfx_device_new` / `lagfx_display_new`.
+
+`apple_gfx_pci_reset` calls `lagfx_device_reset`;
+`apple_gfx_pci_unrealize` tears down the display, device,
+surface, and cursor in that order.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/apple-gfx-pci-linux.c | ~180 insertions(+)
+ 1 file changed, ~180 insertions(+)

@@ -1,0 +1,39 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 3/4] hw/display/vmware_vga: advertise EXTENDED_FIFO
+ capability
+
+`SVGA_CAP_EXTENDED_FIFO` (bit 15) signals that the FIFO
+register block extends past `SVGA_FIFO_STOP` to include the
+capability/flags/fence/3d-version/pitchlock quintuplet. The
+upstream device already defines those offsets in the FIFO
+enum (`SVGA_FIFO_CAPABILITIES` onwards) but gates their
+advertisement behind this capability bit.
+
+Without EXTENDED_FIFO the Linux vmwgfx driver refuses to
+probe the fence and 3D-hwversion slots; with it, the driver
+treats the device as a modern VMware SVGA II, matching the
+behaviour we already implement at the register level.
+
+Tested against the Linux vmwgfx probe path and macOS 15
+vmware_vga driver: both now find the extended slots and no
+longer log "device lacks extended FIFO" warnings.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/vmware_vga.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/hw/display/vmware_vga.c
++++ b/hw/display/vmware_vga.c
+@@ -896,7 +896,7 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
+         break;
+
+     case SVGA_REG_CAPABILITIES:
+-        caps = SVGA_CAP_PITCHLOCK;
++        caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO;
+ #ifdef HW_RECT_ACCEL
+         caps |= SVGA_CAP_RECT_COPY;
+ #endif
+--
+2.47.0
+

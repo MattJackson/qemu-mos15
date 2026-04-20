@@ -1,0 +1,51 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 8/8] pc-bios: ship apple-gfx-pci option ROM
+
+The Apple ParavirtualizedGraphics PCI device loads an option
+ROM from the host that the guest's UEFI firmware uses to
+drive very-early boot (before
+`AppleParavirtGPU.kext` loads in the kernel). On macOS hosts
+the ROM is extracted at runtime from
+ParavirtualizedGraphics.framework via
+`PGCopyOptionROMURL()`; on Linux hosts we have no such API,
+so the ROM must be shipped as a pc-bios blob.
+
+Add `apple-gfx-pci.rom` to the `blobs` list in
+`pc-bios/meson.build` so it is installed into `qemu_datadir`
+alongside the other PC/pc-bios firmware blobs. The PCI core's
+standard `romfile` mechanism (`PCIDeviceClass::romfile`,
+loaded via `qemu_find_file(QEMU_FILE_TYPE_BIOS, ...)`) finds
+it at device realize time.
+
+**Note on the blob itself:** the current `apple-gfx-pci.rom`
+blob in this series is extracted from Apple's
+ParavirtualizedGraphics.framework as a development aid. It
+is not redistributable under GPLv2. Before this patch is
+acceptable for merge the blob must be replaced with an
+in-tree EDK2 build that implements the minimal PCI option
+ROM interface the guest firmware expects. That EDK2 port is
+tracked separately; the blob is included here only so
+reviewers can exercise the device end-to-end.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ pc-bios/meson.build | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/pc-bios/meson.build
++++ b/pc-bios/meson.build
+@@ -85,6 +85,9 @@ blobs = [
+   'npcm7xx_bootrom.bin',
+   'npcm8xx_bootrom.bin',
+   'vof.bin',
+   'vof-nvram.bin',
++  # Apple ParavirtualizedGraphics PCI option ROM (Linux port). See the
++  # note in the commit message about the current blob being a
++  # development placeholder pending an in-tree EDK2 build.
++  'apple-gfx-pci.rom',
+ ]
+
+ if get_option('install_blobs')
+--
+2.47.0
+

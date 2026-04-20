@@ -1,0 +1,35 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 2/4] hw/display/vmware_vga: advertise PITCHLOCK capability
+
+`SVGA_CAP_PITCHLOCK` (bit 17) signals that the device exposes
+the pitchlock FIFO register (`SVGA_FIFO_PITCHLOCK`) and that
+the guest may request a fixed scanout pitch that is honoured
+across mode changes. The upstream device already exposes the
+FIFO slot at the correct offset (via the enum block around
+`SVGA_FIFO_PITCHLOCK`); only the capability bit is missing.
+
+Without this bit, the Linux vmwgfx driver and macOS
+vmware_vga driver both refuse to use the pitchlock path and
+fall back to a default software pitch that does not align
+with the guest framebuffer layout; the result is a visible
+scanline offset on non-power-of-two widths.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/vmware_vga.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/hw/display/vmware_vga.c
++++ b/hw/display/vmware_vga.c
+@@ -896,7 +896,7 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
+         break;
+
+     case SVGA_REG_CAPABILITIES:
+-        caps = SVGA_CAP_NONE;
++        caps = SVGA_CAP_PITCHLOCK;
+ #ifdef HW_RECT_ACCEL
+         caps |= SVGA_CAP_RECT_COPY;
+ #endif
+--
+2.47.0
+

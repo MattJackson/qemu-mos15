@@ -1,0 +1,36 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 1/8] hw/display: add apple-gfx-pci-linux port skeleton
+
+Introduce two new source files and one header that provide
+the scaffolding for a Linux C port of `hw/display/apple-gfx-pci.m`
+and the common logic from `hw/display/apple-gfx.m`:
+
+  * `hw/display/apple-gfx-linux.h` - state struct, callback
+    prototypes, task-list bookkeeping.
+  * `hw/display/apple-gfx-pci-linux.c` - PCI device type
+    registration and minimal instance_init.
+  * `hw/display/apple-gfx-common-linux.c` - stub entry
+    points for the shell callbacks the library will call.
+
+No meson/Kconfig wiring yet; that arrives in patch 7. The
+files are not buildable at this point; subsequent patches
+fill in the behaviour step by step so the series is
+bisectable at a per-feature level.
+
+The port targets `libapplegfx-vulkan` as the backend (found
+via pkg-config); the library reimplements the PGDevice /
+PGShellCallbacks surface of Apple's
+ParavirtualizedGraphics.framework on top of Mesa lavapipe.
+The guest-side `AppleParavirtGPU.kext` is unchanged.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/apple-gfx-common-linux.c | (new file, skeleton)
+ hw/display/apple-gfx-linux.h        | (new file, full)
+ hw/display/apple-gfx-pci-linux.c    | (new file, skeleton)
+ 3 files changed, ~200 insertions(+)
+
+[See the companion upstream-pr/apple-gfx-pci-linux/src/ directory
+ for the three new files in full. When submitting as git
+ format-patch, each file appears as a new-file diff against a
+ tree without any apple-gfx-*-linux.* files.]

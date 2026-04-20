@@ -1,0 +1,28 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 4/8] hw/display/apple-gfx-linux: display callbacks and
+ console integration
+
+Implement the five display callbacks libapplegfx invokes:
+
+  * `apple_gfx_frame_ready`     - schedules a BH to consume the
+    guest-rendered frame, with a 2-frame overrun cap.
+  * `apple_gfx_mode_changed`    - swaps the QEMU display surface
+    to the new (width, height).
+  * `apple_gfx_cursor_glyph`    - converts BGRA from the library
+    to RGBA for QEMU's cursor, re-allocates via `cursor_alloc`,
+    and calls `dpy_cursor_define`.
+  * `apple_gfx_cursor_moved`    - reads the library-side cursor
+    position and forwards via `dpy_mouse_set`.
+  * `apple_gfx_cursor_show`     - latches show/hide state and
+    refreshes position under the same BH.
+
+Console init uses a minimal `GraphicHwOps` with
+`gfx_update_async = true` and no synchronous `gfx_update`;
+rendering is driven entirely from the frame-ready BH, which
+the library will extend in a follow-up patch once the Vulkan
+readout path lands.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/apple-gfx-common-linux.c | ~150 insertions(+)
+ 1 file changed, ~150 insertions(+)

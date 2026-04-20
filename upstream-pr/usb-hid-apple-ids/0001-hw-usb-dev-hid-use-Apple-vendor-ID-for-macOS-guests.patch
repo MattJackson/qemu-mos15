@@ -1,0 +1,125 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH] hw/usb/dev-hid: use Apple vendor ID and strings for HID
+ devices
+
+macOS guests run the Keyboard Setup Assistant at first boot
+for any HID keyboard/mouse/trackpad whose USB descriptor does
+not identify it as Apple-manufactured. On a freshly-installed
+macOS 15 VM this produces a 3-5 minute delay before the
+desktop becomes usable, and on headless VMs it hangs the boot
+indefinitely because the assistant demands user input to
+proceed.
+
+Re-ID the three HID device descriptors (mouse, tablet,
+keyboard) to use Apple's vendor ID 0x05ac and the product ID
+0x0267 (Apple's Magic Keyboard). Also re-ID the string
+descriptors to "Apple Inc." / "Magic Mouse" / "Magic Trackpad"
+/ "Magic Keyboard". The underlying HID report descriptor is
+unchanged, so actual input-handling behaviour is identical.
+
+Caveat for the reviewer: this changes the identity of
+`-device usb-mouse` and `-device usb-kbd` for all guests,
+not just macOS. Preferred upstream shape is almost certainly
+to add a `vendorid=apple` (or `vendor-string=apple`) property
+and default it to the existing QEMU identity. This patch is
+submitted for discussion as the minimal change that fixes
+the macOS user-visible regression; a follow-up converting to
+a property is straightforward and can be requested as a
+revision.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/usb/dev-hid.c | 29 +++++++++++++++++------------
+ 1 file changed, 17 insertions(+), 12 deletions(-)
+
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -63,10 +63,15 @@ enum {
+ };
+
+ static const USBDescStrings desc_strings = {
+-    [STR_MANUFACTURER]     = "QEMU",
+-    [STR_PRODUCT_MOUSE]    = "QEMU USB Mouse",
+-    [STR_PRODUCT_TABLET]   = "QEMU USB Tablet",
+-    [STR_PRODUCT_KEYBOARD] = "QEMU USB Keyboard",
++    /*
++     * Advertise as Apple HID peripherals so macOS guests recognise the
++     * emulated devices as native Apple hardware and skip the Keyboard
++     * Setup Assistant on first boot.
++     */
++    [STR_MANUFACTURER]     = "Apple Inc.",
++    [STR_PRODUCT_MOUSE]    = "Magic Mouse",
++    [STR_PRODUCT_TABLET]   = "Magic Trackpad",
++    [STR_PRODUCT_KEYBOARD] = "Magic Keyboard",
+     [STR_SERIAL_COMPAT]    = "42",
+     [STR_CONFIG_MOUSE]     = "HID Mouse",
+     [STR_CONFIG_TABLET]    = "HID Tablet",
+@@ -368,8 +373,8 @@ static const USBDescMSOS desc_msos_suspend = {
+
+ static const USBDesc desc_mouse = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_MOUSE,
+@@ -382,8 +387,8 @@ static const USBDesc desc_mouse = {
+
+ static const USBDesc desc_mouse2 = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_MOUSE,
+@@ -397,8 +402,8 @@ static const USBDesc desc_mouse2 = {
+
+ static const USBDesc desc_tablet = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_TABLET,
+@@ -411,8 +416,8 @@ static const USBDesc desc_tablet = {
+
+ static const USBDesc desc_tablet2 = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_TABLET,
+@@ -425,8 +430,8 @@ static const USBDesc desc_tablet2 = {
+
+ static const USBDesc desc_keyboard = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_KEYBOARD,
+@@ -439,8 +444,8 @@ static const USBDesc desc_keyboard = {
+
+ static const USBDesc desc_keyboard2 = {
+     .id = {
+-        .idVendor          = 0x0627,
+-        .idProduct         = 0x0001,
++        .idVendor          = 0x05ac, /* Apple vendor ID */
++        .idProduct         = 0x0267, /* Apple keyboard product ID */
+         .bcdDevice         = 0,
+         .iManufacturer     = STR_MANUFACTURER,
+         .iProduct          = STR_PRODUCT_KEYBOARD,
+--
+2.47.0
+

@@ -1,0 +1,25 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 6/8] hw/display/apple-gfx-linux: add gpu_cores property
+
+Expose a `gpu_cores=N` QEMU device property that caps the
+number of Mesa lavapipe worker threads the paravirt GPU uses.
+Default `0` means "unset; let lavapipe pick its own default
+(host core count)"; `N > 0` maps to `LP_NUM_THREADS=N` via
+`lagfx_device_descriptor_t::thread_count`, which the library
+translates into the lavapipe environment variable before its
+first Vulkan call.
+
+Values above `LAGFX_GPU_CORES_MAX` (64) are clamped at
+realize time with a `warn_report` - lavapipe's historical
+`LP_MAX_THREADS` compile-time cap is 32, so 64 leaves
+headroom for future lavapipe builds. Reset-only: lavapipe
+reads the env var once at ICD init.
+
+The property is defined on the PCI wrapper, not the common
+state, so MMIO variants (if added later) can choose their
+own default.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/display/apple-gfx-pci-linux.c | ~30 insertions(+)
+ 1 file changed, ~30 insertions(+)

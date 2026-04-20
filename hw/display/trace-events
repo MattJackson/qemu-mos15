@@ -231,8 +231,8 @@ apple_gfx_mode_change(uint32_t width, uint32_t height) "width=%u height=%u"
 apple_gfx_cursor_set(uint32_t bits_per_pixel, uint32_t width, uint32_t height) "bpp=%u %ux%u"
 apple_gfx_cursor_show(bool show) "show=%d"
 apple_gfx_cursor_move(void) "cursor_move"
-apple_gfx_read(hwaddr offset, uint32_t value) "offset=0x%" HWADDR_PRIx " value=0x%x"
-apple_gfx_write(hwaddr offset, uint64_t val) "offset=0x%" HWADDR_PRIx " val=0x%" PRIx64
+apple_gfx_read(uint64_t offset, uint32_t value) "offset=0x%" PRIx64 " value=0x%x"
+apple_gfx_write(uint64_t offset, uint64_t val) "offset=0x%" PRIx64 " val=0x%" PRIx64
 apple_gfx_common_init(const char *name, size_t mmio_size) "%s mmio_size=0x%zx"
 
 # apple-gfx-mmio.m (upstream; not compiled on Linux but entries

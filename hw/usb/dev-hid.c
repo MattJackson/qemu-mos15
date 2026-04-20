@@ -63,7 +63,11 @@ enum {
 };
 
 static const USBDescStrings desc_strings = {
-    /* mos15: Apple device identity — macOS sees native Apple peripherals */
+    /*
+     * Advertise as Apple HID peripherals so macOS guests recognise the
+     * emulated devices as native Apple hardware and skip the Keyboard
+     * Setup Assistant on first boot.
+     */
     [STR_MANUFACTURER]     = "Apple Inc.",
     [STR_PRODUCT_MOUSE]    = "Magic Mouse",
     [STR_PRODUCT_TABLET]   = "Magic Trackpad",
@@ -369,8 +373,8 @@ static const USBDescMSOS desc_msos_suspend = {
 
 static const USBDesc desc_mouse = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_MOUSE,
@@ -383,8 +387,8 @@ static const USBDesc desc_mouse = {
 
 static const USBDesc desc_mouse2 = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_MOUSE,
@@ -398,8 +402,8 @@ static const USBDesc desc_mouse2 = {
 
 static const USBDesc desc_tablet = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_TABLET,
@@ -412,8 +416,8 @@ static const USBDesc desc_tablet = {
 
 static const USBDesc desc_tablet2 = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_TABLET,
@@ -427,8 +431,8 @@ static const USBDesc desc_tablet2 = {
 
 static const USBDesc desc_keyboard = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_KEYBOARD,
@@ -441,8 +445,8 @@ static const USBDesc desc_keyboard = {
 
 static const USBDesc desc_keyboard2 = {
     .id = {
-        .idVendor          = 0x05ac, /* mos15: Apple vendor ID */
-        .idProduct         = 0x0267, /* mos15: Apple keyboard product ID */
+        .idVendor          = 0x05ac, /* Apple vendor ID */
+        .idProduct         = 0x0267, /* Apple keyboard product ID */
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT_KEYBOARD,

@@ -218,7 +218,12 @@ enum {
 #define SVGA_FIFO_FLAG_NONE             0
 #define SVGA_FIFO_FLAG_ACCELFRONT       (1 << 0)
 
-/* mos15: 5K for iMac20,1 Retina parity (stock 2368x1770 → 4K → 5K) */
+/*
+ * Raise the software-side geometry cap to 5K (5120x2880) so modern
+ * macOS/Linux guests can negotiate Retina-class modes. The VRAM BAR
+ * still bounds what the guest can actually allocate; this is an upper
+ * bound for mode validation.
+ */
 #define SVGA_SCRATCH_SIZE               0x8000
 #define SVGA_MAX_WIDTH                  5120
 #define SVGA_MAX_HEIGHT                 2880
@@ -896,8 +901,15 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CAPABILITIES:
-        /* mos15: All tested capabilities for iMac Retina display.
-         * PITCHLOCK ✓, EXTENDED_FIFO ✓, rest added together. */
+        /*
+         * Advertise the capability bits that modern VMware SVGA II guest
+         * drivers (Linux vmwgfx, macOS 10.13+, Windows 10+) expect at a
+         * minimum. PITCHLOCK lets the guest pin the scanout pitch across
+         * mode changes; EXTENDED_FIFO exposes the pitchlock/fence/3d-hw
+         * FIFO registers above SVGA_FIFO_STOP; 8BIT_EMULATION advertises
+         * legacy palette support; ALPHA_BLEND / ALPHA_CURSOR are
+         * required for the 32-bit ARGB hardware cursor path.
+         */
         caps = SVGA_CAP_PITCHLOCK | SVGA_CAP_EXTENDED_FIFO |
                SVGA_CAP_8BIT_EMULATION | SVGA_CAP_ALPHA_BLEND |
                SVGA_CAP_ALPHA_CURSOR;

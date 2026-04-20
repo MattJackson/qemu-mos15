@@ -35,6 +35,7 @@
 #include "hw/qdev-properties.h"
 #include "ui/console.h"
 #include "qemu/error-report.h"
+#include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
 #include "qom/object.h"
@@ -129,9 +130,11 @@ static void applesmc_io_cmd_write(void *opaque, hwaddr addr, uint64_t val,
     case APPLESMC_WRITE_CMD:
     case APPLESMC_GET_KEY_BY_INDEX_CMD:
     case APPLESMC_GET_KEY_TYPE_CMD:
-        /* mos15: Accept all standard SMC commands.
-         * Original code only handled READ_CMD — macOS hangs if WRITE/TYPE
-         * commands return BAD_CMD during early AppleSMC driver init. */
+        /*
+         * Accept all standard SMC commands. Pre-existing code only handled
+         * READ_CMD; macOS boots hang if WRITE/TYPE/GET_KEY_BY_INDEX commands
+         * return BAD_CMD during early AppleSMC driver init.
+         */
         if (status == APPLESMC_ST_CMD_DONE || status == APPLESMC_ST_NEW_CMD) {
             s->cmd = val;
             s->status = APPLESMC_ST_NEW_CMD | APPLESMC_ST_ACK;
@@ -142,7 +145,8 @@ static void applesmc_io_cmd_write(void *opaque, hwaddr addr, uint64_t val,
         }
         break;
     default:
-        fprintf(stderr, "mos15-smc: unexpected CMD 0x%02x\n", (uint8_t)val);
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "applesmc: unexpected CMD 0x%02x\n", (uint8_t)val);
         s->status = APPLESMC_ST_NEW_CMD;
         s->status_1e = APPLESMC_ST_1E_BAD_CMD;
     }
@@ -186,9 +190,16 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
                 s->status = APPLESMC_ST_ACK | APPLESMC_ST_DATA_READY;
                 s->status_1e = APPLESMC_ST_CMD_DONE;
             } else {
-                /* mos15: Return zeros for unknown keys instead of NOEXIST. */
-                fprintf(stderr, "mos15-smc: READ unknown key '%c%c%c%c' len=%d\n",
-                        s->key[0], s->key[1], s->key[2], s->key[3], (uint8_t)val);
+                /*
+                 * Return zeros for unknown keys instead of NOEXIST. Early
+                 * macOS boot probes many undocumented keys; responding
+                 * NOEXIST triggers retry storms. A zeroed payload satisfies
+                 * the probe without asserting a particular value.
+                 */
+                qemu_log_mask(LOG_UNIMP,
+                              "applesmc: READ unknown key '%c%c%c%c' len=%d\n",
+                              s->key[0], s->key[1], s->key[2], s->key[3],
+                              (uint8_t)val);
                 memset(s->data, 0, APPLESMC_MAX_DATA_LENGTH);
                 s->data_len = (uint8_t)val;
                 s->data_pos = 0;
@@ -199,8 +210,11 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     case APPLESMC_WRITE_CMD:
-        /* mos15: Accept writes silently. macOS writes SMC keys during
-         * power management, fan control, etc. We accept and log them. */
+        /*
+         * Accept writes silently. macOS writes SMC keys during power
+         * management, fan control, etc. Log at LOG_UNIMP for visibility
+         * without treating the write as an error.
+         */
         if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
             break;
         }
@@ -216,8 +230,10 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
                 s->data[s->data_pos] = (uint8_t)val;
                 s->data_pos++;
                 if (s->data_pos == s->data_len) {
-                    fprintf(stderr, "mos15-smc: WRITE key '%c%c%c%c' len=%d\n",
-                            s->key[0], s->key[1], s->key[2], s->key[3], s->data_len);
+                    qemu_log_mask(LOG_UNIMP,
+                                  "applesmc: WRITE key '%c%c%c%c' len=%d\n",
+                                  s->key[0], s->key[1], s->key[2], s->key[3],
+                                  s->data_len);
                     s->status = APPLESMC_ST_CMD_DONE;
                     s->status_1e = APPLESMC_ST_CMD_DONE;
                 } else {
@@ -228,11 +244,14 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     case APPLESMC_GET_KEY_TYPE_CMD:
-        /* mos15: Return key type info. Protocol (from VirtualSMC):
-         * - Receive 4 bytes of key name
-         * - After 4th byte, immediately set DATA_READY with response
-         * - Response is 6 bytes: type[4] + size[1] + attr[1]
-         * NO length byte between key name and response (unlike READ_CMD). */
+        /*
+         * Return key type info. Protocol (matches VirtualSMC):
+         * - Receive 4 bytes of key name.
+         * - After the 4th byte, immediately set DATA_READY with response.
+         * - Response is 6 bytes: type[4] + size[1] + attr[1].
+         * Unlike READ_CMD there is no length byte between key name and
+         * response.
+         */
         if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
             break;
         }
@@ -267,8 +286,9 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
                 s->data[4] = d->len;
                 s->data[5] = 0xD0;
             } else {
-                fprintf(stderr, "mos15-smc: GET_KEY_TYPE unknown '%c%c%c%c'\n",
-                        s->key[0], s->key[1], s->key[2], s->key[3]);
+                qemu_log_mask(LOG_UNIMP,
+                              "applesmc: GET_KEY_TYPE unknown '%c%c%c%c'\n",
+                              s->key[0], s->key[1], s->key[2], s->key[3]);
                 s->data[0] = 'u'; s->data[1] = 'i';
                 s->data[2] = '8'; s->data[3] = ' ';
                 s->data[4] = 1;
@@ -282,13 +302,16 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     case APPLESMC_GET_KEY_BY_INDEX_CMD:
-        /* mos15: Return key name by index. macOS sends a 4-byte big-endian
-         * index, expects the 4-byte ASCII key name at that position. The old
-         * implementation returned 4 zeros, which macOS treated as an invalid
-         * key name — kSMCSpuriousData(0x81) — and retried, flooding the
-         * kernel log at ~1,800 errors/sec. Now we walk the keys list and
-         * return the actual key name, or BAD_INDEX (0xb8) to tell macOS
-         * "stop iterating, you've gone past the end." */
+        /*
+         * Return key name by index. macOS sends a 4-byte big-endian index
+         * and expects the 4-byte ASCII key name at that position. The
+         * previous implementation returned 4 zero bytes, which macOS
+         * treated as kSMCSpuriousData (0x81) and retried indefinitely,
+         * flooding the kernel log at ~1800 errors/sec. Walk the keys list
+         * to return the actual key name, or APPLESMC_ST_1E_BAD_INDEX
+         * (0xb8) once the index is past the end of the list so the guest
+         * stops iterating.
+         */
         if ((s->status & 0x0f) == APPLESMC_ST_CMD_DONE) {
             break;
         }
@@ -327,7 +350,8 @@ static void applesmc_io_data_write(void *opaque, hwaddr addr, uint64_t val,
         s->read_pos++;
         break;
     default:
-        fprintf(stderr, "mos15-smc: unhandled data for cmd 0x%02x\n", s->cmd);
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "applesmc: unhandled data for cmd 0x%02x\n", s->cmd);
         s->status = APPLESMC_ST_CMD_DONE;
         s->status_1e = APPLESMC_ST_1E_STILL_BAD_CMD;
     }
@@ -477,80 +501,90 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "MSSP", 1, "\0");
     applesmc_add_key(s, "MSSD", 1, "\x03");
 
-    /* mos15: GPU power management — prevents AGPM crash cascade.
-     * Without HE2N, AGPM reads NOEXIST → error 0x82 → system hang
-     * on dynamic wallpaper changes. Value 0x00 = no GPU power mgmt. */
-    applesmc_add_key(s, "HE2N", 1, "\x00");  /* GPU power — driver sets to 1 on start */
+    /*
+     * GPU power-management keys. Without HE2N the AGPM driver reads
+     * NOEXIST, errors out (0x82) and hangs the system on dynamic
+     * wallpaper changes. The driver itself sets the value to 1 on
+     * start, so the boot default of 0 is correct.
+     */
+    applesmc_add_key(s, "HE2N", 1, "\x00");  /* dGPU power enable */
 
-    /* mos15: Watchdog timer control — fixes 16 SMCWDT errors per boot.
-     * QEMU's SMC doesn't implement the watchdog key, VirtualSMC doesn't
-     * either. macOS queries it during early boot. */
+    /*
+     * Watchdog timer control. Queried by macOS during early boot; an
+     * unanswered query produces a cluster of SMCWDT errors per boot.
+     */
     applesmc_add_key(s, "WDTC", 1, "\x00");
 
-    /* mos15: GPU temperature sensors — iMac20,1 has dGPU temp reporting.
-     * Values from real iMac20,1 sensor readings. SP78 format: 16-bit big-endian,
-     * top 8 bits = integer °C, bottom 8 bits = fraction. Returning 0 made
-     * macOS flag these as broken sensors and retry-poll. */
-    applesmc_add_key(s, "TGDD", 2, "\x46\x00");  /* GPU diode: 70°C */
-    applesmc_add_key(s, "TG0P", 2, "\x41\x00");  /* GPU 0 proximity: 65°C */
+    /*
+     * GPU temperature sensors. SP78 format: 16-bit big-endian with the
+     * top 8 bits encoding integer degrees C and the bottom 8 bits the
+     * fraction. Returning zeroed sensors caused macOS to flag these as
+     * broken and retry-poll. Values approximate a warm idle iMac20,1.
+     */
+    applesmc_add_key(s, "TGDD", 2, "\x46\x00");  /* GPU diode: 70 C */
+    applesmc_add_key(s, "TG0P", 2, "\x41\x00");  /* GPU proximity: 65 C */
 
-    /* mos15: Fan control — iMac20,1 has 1 chassis fan.
-     * Real iMac20,1 idle: ~1500 RPM, min 1200, max 3600 (§6).
-     * fpe2 format: raw = RPM << 2. 1500<<2 = 6000 = 0x1770 BE. */
+    /*
+     * Fan control (iMac20,1 has one chassis fan). fpe2 format: raw
+     * value is RPM << 2, big-endian. Idle ~1500 RPM, range 1200-3600.
+     */
     applesmc_add_key(s, "FNum", 1, "\x01");
     applesmc_add_key(s, "F0Ac", 2, "\x17\x70");  /* current: 1500 RPM */
     applesmc_add_key(s, "F0Mn", 2, "\x12\xC0");  /* min:     1200 RPM */
     applesmc_add_key(s, "F0Mx", 2, "\x38\x40");  /* max:     3600 RPM */
 
-    /* mos15: Platform info keys that VirtualSMC looks for */
+    /* Platform-identity keys also provided by VirtualSMC. */
     applesmc_add_key(s, "MPRO", 1, "\x01");  /* model property */
     applesmc_add_key(s, "MPRD", 1, "\x00");  /* model product */
     applesmc_add_key(s, "LGPB", 1, "\x00");  /* lid/GPU power */
 
-    /* mos15: CPU/power keys for X86PlatformPlugin */
+    /* CPU/power keys consumed by X86PlatformPlugin. */
     applesmc_add_key(s, "BSLN", 1, "\x00");  /* baseline */
     applesmc_add_key(s, "EPCI", 4, "\x00\x00\x00\x00"); /* EPC info */
     applesmc_add_key(s, "BEMB", 1, "\x01");  /* board embedded */
 
-    /* mos15: Boot-discovered keys */
+    /* Keys read by the boot-time SMC probe. */
     applesmc_add_key(s, "OSWD", 2, "\x00\x00");  /* OS watchdog timer */
     applesmc_add_key(s, "MSSW", 1, "\x00");  /* macOS software state */
-    applesmc_add_key(s, "RGEN", 1, "\x02");  /* SMC generation/revision */
-    applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00"); /* display power limit */
-    applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00"); /* SMC base address */
+    applesmc_add_key(s, "RGEN", 1, "\x02");  /* SMC generation */
+    applesmc_add_key(s, "DPLM", 4, "\x00\x00\x00\x00"); /* display power */
+    applesmc_add_key(s, "$Adr", 4, "\x00\x00\x03\x00"); /* SMC base addr */
 
-    /* mos15: Temperature sensors — realistic iMac20,1 values from §6 of
-     * imac20-1-hardware-reference.md. SP78 format (BE). Zeros were causing
-     * macOS to retry-poll broken sensors. */
-    applesmc_add_key(s, "TC0F", 2, "\x48\x00");  /* CPU 0 PECI filtered: 72°C */
-    applesmc_add_key(s, "TC0P", 2, "\x41\x00");  /* CPU 0 proximity: 65°C */
-    applesmc_add_key(s, "TCXc", 2, "\x55\x00");  /* CPU PECI core max: 85°C */
-    applesmc_add_key(s, "TG0F", 2, "\x41\x00");  /* GPU 0 filtered: 65°C */
-    applesmc_add_key(s, "TG1F", 2, "\x41\x00");  /* GPU 1 filtered: 65°C */
-    applesmc_add_key(s, "TH0P", 2, "\x2E\x00");  /* HDD proximity: 46°C */
-    applesmc_add_key(s, "TH1A", 2, "\x1A\x00");  /* HDD 1 ambient: 26°C */
-    applesmc_add_key(s, "TH1C", 2, "\x2E\x00");  /* HDD 1 core: 46°C */
-    applesmc_add_key(s, "TH1F", 2, "\x2E\x00");  /* HDD 1 filtered: 46°C */
-    applesmc_add_key(s, "TL0V", 2, "\x25\x00");  /* LCD 0: 37°C */
-    applesmc_add_key(s, "TL1V", 2, "\x27\x00");  /* LCD 1: 39°C */
-    applesmc_add_key(s, "TM0P", 2, "\x2D\x00");  /* memory proximity: 45°C */
-    applesmc_add_key(s, "TM0V", 2, "\x2D\x00");  /* memory VRM: 45°C */
-    applesmc_add_key(s, "Tp00", 2, "\x1A\x00");  /* power supply: 26°C */
-    applesmc_add_key(s, "Tp2F", 2, "\x1A\x00");  /* power supply 2: 26°C */
-    applesmc_add_key(s, "Ts0S", 2, "\x1A\x00");  /* sensor 0: 26°C */
-    applesmc_add_key(s, "TS0V", 2, "\x1A\x00");  /* sensor 0 voltage: 26°C */
-    applesmc_add_key(s, "Ts1S", 2, "\x1A\x00");  /* sensor 1: 26°C */
-    applesmc_add_key(s, "Ts2S", 2, "\x1A\x00");  /* sensor 2: 26°C */
-    applesmc_add_key(s, "TB0T", 2, "\x00\x00");  /* no battery (iMac) */
+    /*
+     * Temperature sensors covering the rails the macOS AppleSMC client
+     * polls on an iMac20,1-class host. Values are realistic idle
+     * readings in SP78 (big-endian) format; zeros trigger retry storms
+     * on broken-sensor paths.
+     */
+    applesmc_add_key(s, "TC0F", 2, "\x48\x00");  /* CPU PECI filt: 72 C */
+    applesmc_add_key(s, "TC0P", 2, "\x41\x00");  /* CPU proximity: 65 C */
+    applesmc_add_key(s, "TCXc", 2, "\x55\x00");  /* CPU core max: 85 C */
+    applesmc_add_key(s, "TG0F", 2, "\x41\x00");  /* GPU 0 filt: 65 C */
+    applesmc_add_key(s, "TG1F", 2, "\x41\x00");  /* GPU 1 filt: 65 C */
+    applesmc_add_key(s, "TH0P", 2, "\x2E\x00");  /* HDD proximity: 46 C */
+    applesmc_add_key(s, "TH1A", 2, "\x1A\x00");  /* HDD 1 ambient: 26 C */
+    applesmc_add_key(s, "TH1C", 2, "\x2E\x00");  /* HDD 1 core: 46 C */
+    applesmc_add_key(s, "TH1F", 2, "\x2E\x00");  /* HDD 1 filt: 46 C */
+    applesmc_add_key(s, "TL0V", 2, "\x25\x00");  /* LCD 0: 37 C */
+    applesmc_add_key(s, "TL1V", 2, "\x27\x00");  /* LCD 1: 39 C */
+    applesmc_add_key(s, "TM0P", 2, "\x2D\x00");  /* memory prox: 45 C */
+    applesmc_add_key(s, "TM0V", 2, "\x2D\x00");  /* memory VRM: 45 C */
+    applesmc_add_key(s, "Tp00", 2, "\x1A\x00");  /* PSU: 26 C */
+    applesmc_add_key(s, "Tp2F", 2, "\x1A\x00");  /* PSU 2: 26 C */
+    applesmc_add_key(s, "Ts0S", 2, "\x1A\x00");  /* sensor 0: 26 C */
+    applesmc_add_key(s, "TS0V", 2, "\x1A\x00");  /* sensor 0 V: 26 C */
+    applesmc_add_key(s, "Ts1S", 2, "\x1A\x00");  /* sensor 1: 26 C */
+    applesmc_add_key(s, "Ts2S", 2, "\x1A\x00");  /* sensor 2: 26 C */
+    applesmc_add_key(s, "TB0T", 2, "\x00\x00");  /* no battery */
     applesmc_add_key(s, "TB1T", 2, "\x00\x00");  /* no battery */
     applesmc_add_key(s, "TB2T", 2, "\x00\x00");  /* no battery */
-    applesmc_add_key(s, "TA0V", 2, "\x1A\x00");  /* ambient 0: 26°C */
-    applesmc_add_key(s, "TVMD", 2, "\x32\x00");  /* VRM diode: 50°C */
-    applesmc_add_key(s, "TVmS", 2, "\x32\x00");  /* VRM sense: 50°C */
-    applesmc_add_key(s, "TVSL", 2, "\x32\x00");  /* VRM sense left: 50°C */
-    applesmc_add_key(s, "TVSR", 2, "\x32\x00");  /* VRM sense right: 50°C */
+    applesmc_add_key(s, "TA0V", 2, "\x1A\x00");  /* ambient 0: 26 C */
+    applesmc_add_key(s, "TVMD", 2, "\x32\x00");  /* VRM diode: 50 C */
+    applesmc_add_key(s, "TVmS", 2, "\x32\x00");  /* VRM sense: 50 C */
+    applesmc_add_key(s, "TVSL", 2, "\x32\x00");  /* VRM sense L: 50 C */
+    applesmc_add_key(s, "TVSR", 2, "\x32\x00");  /* VRM sense R: 50 C */
 
-    /* mos15: Power/platform (12 keys) */
+    /* Power and platform rails (12 keys). */
     applesmc_add_key(s, "PC0R", 2, "\x00\x00");  /* CPU 0 rail */
     applesmc_add_key(s, "PCPC", 2, "\x00\x00");  /* CPU package core */
     applesmc_add_key(s, "PCPG", 2, "\x00\x00");  /* CPU package GPU */
@@ -564,7 +598,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "PSTR", 2, "\x00\x00");  /* power supply temp rail */
     applesmc_add_key(s, "PHDC", 2, "\x00\x00");  /* platform HDC */
 
-    /* mos15: Memory/DIMM (6 keys) */
+    /* Memory / DIMM counters (6 keys). */
     applesmc_add_key(s, "DM0P", 2, "\x00\x00");  /* DIMM 0 proximity */
     applesmc_add_key(s, "DM0S", 2, "\x00\x00");  /* DIMM 0 sensor */
     applesmc_add_key(s, "DM1P", 2, "\x00\x00");  /* DIMM 1 proximity */
@@ -572,7 +606,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "MD1R", 2, "\x00\x00");  /* memory DIMM 1 read */
     applesmc_add_key(s, "MD1W", 2, "\x00\x00");  /* memory DIMM 1 write */
 
-    /* mos15: SMC internal (11 keys) */
+    /* SMC internal bookkeeping (11 keys). */
     applesmc_add_key(s, "CLKH", 1, "\x00");  /* clock halt */
     applesmc_add_key(s, "DICT", 1, "\x00");  /* dictionary */
     applesmc_add_key(s, "RPlt", 2, "\x00\x00");  /* platform revision */
@@ -585,7 +619,7 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "maNN", 1, "\x00");  /* manufacturer NN */
     applesmc_add_key(s, "mxT1", 2, "\x00\x00");  /* max temp 1 */
 
-    /* mos15: Sensors/misc (13 keys) */
+    /* Miscellaneous sensor/motion keys (13 keys). */
     applesmc_add_key(s, "MSAc", 1, "\x00");  /* motion sensor active */
     applesmc_add_key(s, "MSAf", 1, "\x00");  /* motion sensor filter */
     applesmc_add_key(s, "MSAg", 1, "\x00");  /* motion sensor gain */
@@ -600,23 +634,27 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     applesmc_add_key(s, "WIw0", 2, "\x00\x00");  /* WiFi write 0 */
     applesmc_add_key(s, "WIz0", 2, "\x00\x00");  /* WiFi zone 0 */
 
-    /* mos15: Write targets (also need to be readable) */
-    applesmc_add_key(s, "HE0N", 1, "\x00");  /* iGPU power — driver sets to 1 on start */
+    /* Write targets that must also be readable. */
+    applesmc_add_key(s, "HE0N", 1, "\x00");  /* iGPU power; driver sets 1 */
     applesmc_add_key(s, "MSDW", 1, "\x00");  /* MSD write */
     applesmc_add_key(s, "NTOK", 1, "\x00");  /* notification token */
 
-    /* mos15: Key count — must match actual number of keys above. Used by
-     * some VirtualSMC paths; kept for compatibility. #KEY below is the
-     * canonical Apple SMC "total keys" key that macOS iterates against. */
+    /*
+     * VirtualSMC-compatible total-keys key. Kept for compatibility with
+     * drivers that look for $Num; the canonical Apple #KEY below is what
+     * macOS actually iterates against.
+     */
     applesmc_add_key(s, "$Num", 4, "\x00\x00\x00\x5e");
 
-    /* mos15: #KEY — Apple SMC convention. macOS reads this at boot to know
-     * the total SMC key count, then iterates 0..count-1 via
-     * APPLESMC_GET_KEY_BY_INDEX_CMD. Without it, macOS iterates unbounded
-     * and every out-of-range request floods the kernel log with
-     * kSMCSpuriousData errors (~1800/sec observed before this fix). Count
-     * is computed post-hoc by walking the list; the buffer is static so
-     * its pointer stays valid for the device's lifetime. */
+    /*
+     * #KEY - Apple SMC convention for "total key count". macOS reads it
+     * at boot and iterates 0..count-1 via APPLESMC_GET_KEY_BY_INDEX_CMD.
+     * Without this key, macOS iterates unbounded and every out-of-range
+     * request floods the kernel log with kSMCSpuriousData errors
+     * (measured ~1800/sec on macOS 15). Count is computed by walking the
+     * list. The buffer is function-static so the pointer stays valid
+     * for the device's lifetime.
+     */
     {
         int count = 1;  /* include #KEY itself */
         struct AppleSMCData *def;

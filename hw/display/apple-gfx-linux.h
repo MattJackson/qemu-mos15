@@ -66,15 +66,17 @@ typedef struct AppleGFXLinuxState {
     AppleGFXDisplayMode *display_modes;
     uint32_t num_display_modes;
 
-    /* Per-VM lavapipe worker-thread budget (from -device gpu_cores=N).
+    /*
+     * Per-VM lavapipe worker-thread budget (from -device gpu_cores=N).
      * 0 = unset; let lavapipe pick its default (host core count).
      * Copied into lagfx_device_descriptor_t::thread_count at realize
      * time, where the library translates it into LP_NUM_THREADS before
      * the first Vulkan call. Process-global: if multiple apple-gfx-pci
-     * devices are created in one QEMU process (not a typical deploy —
-     * mos-docker is one-VM-per-container), the first non-zero value
-     * wins. Reset-only; changes after QEMU start are not picked up.
-     * See paravirt-re/gpu-cores-implementation-spec.md. */
+     * devices are created in one QEMU process (an atypical deploy; the
+     * single-VM-per-process case is the tested path), the first
+     * non-zero value wins. Reset-only; changes after QEMU start are
+     * not picked up.
+     */
     uint32_t gpu_cores;
 
     /* Frame rendering state */

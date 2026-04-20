@@ -1,0 +1,123 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 3/3] hw/usb/dev-hid: add apple-tablet HID wrapper device
+
+Introduce a new QOM type 'apple-tablet' that inherits from 'usb-tablet'
+and advertises an Apple Inc. USB descriptor (vendor 0x05ac, product
+0x030e, product string "Apple Magic Trackpad"). HID report descriptor,
+absolute-position packet format, and data-handling paths are reused
+unchanged from the base usb-tablet device; only the enumeration-time
+USB descriptor is changed.
+
+Completing the apple-kbd / apple-mouse / apple-tablet trio gives macOS
+guests a full Apple-identity HID set at descriptor level, avoiding the
+first-boot Keyboard Setup Assistant without changing the default
+usb-tablet identity for other guests. Opt-in via '-device apple-tablet'.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/usb/dev-hid.c | 85 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -1081,8 +1081,92 @@
+     .name          = "apple-mouse",
+     .parent        = "usb-mouse",
+     .class_init    = usb_apple_mouse_class_initfn,
++};
++
++/* apple-tablet: parent usb-tablet, VID:PID 0x05ac:0x030e ("Magic Trackpad"). */
++static const USBDescDevice desc_device_apple_tablet = {
++    .bcdUSB                        = 0x0100,
++    .bMaxPacketSize0               = 8,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_TABLET,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_tablet,
++        },
++    },
++};
++
++static const USBDescDevice desc_device_apple_tablet2 = {
++    .bcdUSB                        = 0x0200,
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_TABLET,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_tablet2,
++        },
++    },
+ };
+ 
++static const USBDesc desc_apple_tablet = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x030e,
++        .bcdDevice         = 0x0110,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_TABLET,
++        .iSerialNumber     = STR_APPLE_SERIAL_TABLET,
++    },
++    .full = &desc_device_apple_tablet,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
++};
++
++static const USBDesc desc_apple_tablet2 = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x030e,
++        .bcdDevice         = 0x0110,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_TABLET,
++        .iSerialNumber     = STR_APPLE_SERIAL_TABLET,
++    },
++    .full = &desc_device_apple_tablet,
++    .high = &desc_device_apple_tablet2,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
++};
++
++static void usb_apple_tablet_realize(USBDevice *dev, Error **errp)
++{
++    usb_hid_initfn(dev, HID_TABLET,
++                   &desc_apple_tablet, &desc_apple_tablet2, errp);
++}
++
++static void usb_apple_tablet_class_initfn(ObjectClass *klass, const void *data)
++{
++    USBDeviceClass *uc = USB_DEVICE_CLASS(klass);
++
++    uc->realize      = usb_apple_tablet_realize;
++    uc->product_desc = "Apple Magic Trackpad";
++}
++
++static const TypeInfo usb_apple_tablet_info = {
++    .name          = "apple-tablet",
++    .parent        = "usb-tablet",
++    .class_init    = usb_apple_tablet_class_initfn,
++};
++
+ static void usb_hid_register_types(void)
+ {
+     type_register_static(&usb_hid_type_info);
+@@ -1094,6 +1178,7 @@
+     usb_legacy_register("usb-kbd", "keyboard", NULL);
+     type_register_static(&usb_apple_kbd_info);
+     type_register_static(&usb_apple_mouse_info);
++    type_register_static(&usb_apple_tablet_info);
+ }
+ 
+ type_init(usb_hid_register_types)

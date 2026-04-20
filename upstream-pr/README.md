@@ -13,7 +13,7 @@ description (`PR_DESCRIPTION.md`), and a testing recipe
 | [A](./applesmc-fix/) | Fix `GET_KEY_BY_INDEX` and populate boot keys | 4 patches | **Ready to submit** |
 | [B](./apple-gfx-pci-linux/) | Linux-host port of `apple-gfx-pci` | 8 patches | **Draft; blocked on libapplegfx-vulkan packaging** |
 | [C](./vmware-svga-caps/) | VMware SVGA II capability bits + 5K cap | 4 patches | **Ready to submit** |
-| [D](./usb-hid-apple-ids/) | USB HID Apple vendor IDs | 1 patch | **Draft; needs conversion to a device property** |
+| [D](./usb-hid-apple-ids/) | USB HID Apple vendor IDs | 3 patches | **Ready to submit** |
 
 ## Per-package status
 
@@ -62,21 +62,33 @@ flips the capability bits.
 Dependencies: none.
 Ready to submit: **yes, immediately**.
 
-### D - USB HID Apple vendor IDs (needs revision)
+### D - USB HID Apple vendor IDs (ready)
 
-Re-IDs QEMU's `usb-mouse` / `usb-kbd` / `usb-tablet` devices
-to Apple's vendor/product IDs to skip the macOS Keyboard
-Setup Assistant.
+Adds three opt-in wrapper devices - `apple-kbd`,
+`apple-mouse`, `apple-tablet` - that inherit from
+`usb-kbd` / `usb-mouse` / `usb-tablet` respectively and
+override only the USB enumeration-time descriptor (Apple
+vendor 0x05ac, real Apple product IDs, Apple Inc.
+manufacturer / product strings). The HID report descriptor
+and data-handling paths are reused 1:1 from the parent
+devices.
 
-**Not upstream-acceptable in its current form** - the
-change is global and affects all guests, not just macOS.
-Expected reviewer response is to convert to a
-`vendor-string=` / `vendorid=` property on the device,
-defaulting to the existing QEMU identity.
+Zero behaviour change for existing users: `-device
+usb-kbd` / `usb-mouse` / `usb-tablet` and their vmstate
+are unchanged. Migration of existing VMs is unaffected.
 
-Dependencies: conversion to a property-driven design.
-Ready to submit: **draft** - open for discussion, expect
-revision request before merge.
+Motivation: macOS guests run the Keyboard Setup Assistant
+at first boot for any non-Apple HID keyboard, which costs
+3-5 minutes on interactive installs and hangs headless
+(VNC / SPICE) installs indefinitely. The new devices let
+macOS-guest users opt into Apple-identity HID without
+affecting any other guest.
+
+Supersedes an earlier single-patch draft that re-ID'd the
+base devices globally.
+
+Dependencies: none.
+Ready to submit: **yes, immediately**.
 
 ## Submission order recommendation
 
@@ -84,8 +96,9 @@ revision request before merge.
    impact, cleanest diff.
 2. **Package C** (vmware_vga) alongside or immediately after -
    similarly uncontroversial.
-3. **Package D** (USB HID) as a draft to start the property-
-   conversion discussion with maintainers.
+3. **Package D** (USB HID apple-kbd / apple-mouse /
+   apple-tablet wrappers) alongside A and C - additive, zero
+   behaviour change for existing users.
 4. **Package B** (apple-gfx-pci-linux) last, once the
    dependency story is resolved.
 
@@ -115,9 +128,16 @@ against the post-cleanup tree and the upstream QEMU master
 reference, so there are no fork-local identifiers in any
 of the patch files.
 
-Forty fork-local identifiers were found and cleaned across
-four files:
+Fork-local identifiers found and cleaned across the
+custom files:
   * `hw/misc/applesmc.c`: 24
-  * `hw/usb/dev-hid.c`: 13
   * `hw/display/vmware_vga.c`: 2
   * `hw/display/apple-gfx-linux.h`: 1
+
+`hw/usb/dev-hid.c` previously carried 13 fork-local
+descriptor-string edits ("mos15:" comments and Apple IDs
+baked into the base devices' descriptors). Those have been
+reverted to upstream verbatim; the Apple identity now lives
+in the opt-in `apple-kbd` / `apple-mouse` / `apple-tablet`
+wrapper types added at the bottom of the same file (see
+Package D).

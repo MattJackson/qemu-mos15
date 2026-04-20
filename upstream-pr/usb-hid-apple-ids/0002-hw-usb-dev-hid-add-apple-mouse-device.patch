@@ -1,0 +1,121 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 2/3] hw/usb/dev-hid: add apple-mouse HID wrapper device
+
+Introduce a new QOM type 'apple-mouse' that inherits from 'usb-mouse'
+and advertises an Apple Inc. USB descriptor (vendor 0x05ac, product
+0x030d, product string "Apple Mighty Mouse"). HID report descriptor
+and data-handling paths are reused unchanged from the base usb-mouse
+device.
+
+Motivation is identical to the preceding apple-kbd patch: macOS guests
+that enumerate a non-Apple pointing device can trigger the Keyboard
+Setup Assistant on first boot. Opt-in via '-device apple-mouse';
+'-device usb-mouse' retains the upstream QEMU identity.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/usb/dev-hid.c | 84 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -998,8 +998,91 @@
+     .name          = "apple-kbd",
+     .parent        = "usb-kbd",
+     .class_init    = usb_apple_kbd_class_initfn,
++};
++
++/* apple-mouse: parent usb-mouse, VID:PID 0x05ac:0x030d ("Mighty Mouse"). */
++static const USBDescDevice desc_device_apple_mouse = {
++    .bcdUSB                        = 0x0100,
++    .bMaxPacketSize0               = 8,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_MOUSE,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_mouse,
++        },
++    },
++};
++
++static const USBDescDevice desc_device_apple_mouse2 = {
++    .bcdUSB                        = 0x0200,
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_MOUSE,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_mouse2,
++        },
++    },
++};
++
++static const USBDesc desc_apple_mouse = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x030d,
++        .bcdDevice         = 0x0110,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_MOUSE,
++        .iSerialNumber     = STR_APPLE_SERIAL_MOUSE,
++    },
++    .full = &desc_device_apple_mouse,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
+ };
+ 
++static const USBDesc desc_apple_mouse2 = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x030d,
++        .bcdDevice         = 0x0110,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_MOUSE,
++        .iSerialNumber     = STR_APPLE_SERIAL_MOUSE,
++    },
++    .full = &desc_device_apple_mouse,
++    .high = &desc_device_apple_mouse2,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
++};
++
++static void usb_apple_mouse_realize(USBDevice *dev, Error **errp)
++{
++    usb_hid_initfn(dev, HID_MOUSE, &desc_apple_mouse, &desc_apple_mouse2, errp);
++}
++
++static void usb_apple_mouse_class_initfn(ObjectClass *klass, const void *data)
++{
++    USBDeviceClass *uc = USB_DEVICE_CLASS(klass);
++
++    uc->realize      = usb_apple_mouse_realize;
++    uc->product_desc = "Apple Mighty Mouse";
++}
++
++static const TypeInfo usb_apple_mouse_info = {
++    .name          = "apple-mouse",
++    .parent        = "usb-mouse",
++    .class_init    = usb_apple_mouse_class_initfn,
++};
++
+ static void usb_hid_register_types(void)
+ {
+     type_register_static(&usb_hid_type_info);
+@@ -1010,6 +1093,7 @@
+     type_register_static(&usb_keyboard_info);
+     usb_legacy_register("usb-kbd", "keyboard", NULL);
+     type_register_static(&usb_apple_kbd_info);
++    type_register_static(&usb_apple_mouse_info);
+ }
+ 
+ type_init(usb_hid_register_types)

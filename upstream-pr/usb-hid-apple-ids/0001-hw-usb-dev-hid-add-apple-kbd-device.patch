@@ -1,0 +1,182 @@
+From: Matthew Jackson <matthew@pq.io>
+Subject: [PATCH 1/3] hw/usb/dev-hid: add apple-kbd HID wrapper device
+
+Introduce a new QOM type 'apple-kbd' that inherits from 'usb-kbd' and
+advertises an Apple Inc. USB descriptor (vendor 0x05ac, product 0x024f,
+manufacturer "Apple Inc.", product string "Apple Keyboard"). The HID
+report descriptor and data-handling paths are reused unchanged from the
+base usb-kbd device.
+
+Motivation: macOS guests run the Keyboard Setup Assistant on first boot
+for any HID keyboard whose USB descriptor does not identify it as
+Apple-manufactured. On a fresh install this introduces a multi-minute
+delay before the desktop becomes usable, and on headless VNC/SPICE
+installs with no pointer input available it hangs the boot
+indefinitely because the assistant demands user input to proceed.
+
+The device is opt-in: selecting '-device usb-kbd' still yields the
+unchanged QEMU identity. Users who want the Apple-descriptor behaviour
+pass '-device apple-kbd' instead. No existing command line, migration
+stream, property set, or code path changes meaning.
+
+Signed-off-by: Matthew Jackson <matthew@pq.io>
+---
+ hw/usb/dev-hid.c | 139 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 139 insertions(+)
+
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -861,7 +861,145 @@
+     .parent        = TYPE_USB_HID,
+     .class_init    = usb_keyboard_class_initfn,
+ };
++
++/*
++ * Apple HID wrapper devices
++ * -------------------------
++ *
++ * apple-kbd / apple-mouse / apple-tablet inherit from usb-kbd / usb-mouse /
++ * usb-tablet respectively. They behave identically to their parents for HID
++ * report purposes (the HID report descriptors and data-handling code paths
++ * are unchanged) but advertise Apple Inc. vendor/product/string descriptors
++ * at USB enumeration time.
++ *
++ * Motivation: macOS guests run the Keyboard Setup Assistant on first boot
++ * for any HID device whose USB descriptor does not identify as Apple-
++ * manufactured. On a fresh macOS install that introduces a multi-minute
++ * delay before the desktop becomes usable, and on headless (VNC/SPICE)
++ * installs with no pointer input it hangs the boot indefinitely.
++ *
++ * These devices are opt-in: users who do not select them get the unchanged
++ * usb-kbd / usb-mouse / usb-tablet behaviour. No existing command line,
++ * migration stream, or device property changes meaning.
++ *
++ * The vendor ID is 0x05ac (Apple Inc., USB-IF assigned). Product IDs match
++ * real shipping Apple HID peripherals:
++ *   apple-kbd    0x024f  "Apple Keyboard"
++ *   apple-mouse  0x030d  "Apple Mighty Mouse"
++ *   apple-tablet 0x030e  "Apple Magic Trackpad"
++ */
+ 
++enum {
++    STR_APPLE_MANUFACTURER = 1,
++    STR_APPLE_PRODUCT_KBD,
++    STR_APPLE_PRODUCT_MOUSE,
++    STR_APPLE_PRODUCT_TABLET,
++    STR_APPLE_SERIAL_COMPAT,
++    STR_APPLE_CONFIG_KBD,
++    STR_APPLE_CONFIG_MOUSE,
++    STR_APPLE_CONFIG_TABLET,
++    STR_APPLE_SERIAL_KBD,
++    STR_APPLE_SERIAL_MOUSE,
++    STR_APPLE_SERIAL_TABLET,
++};
++
++static const USBDescStrings desc_strings_apple = {
++    [STR_APPLE_MANUFACTURER]   = "Apple Inc.",
++    [STR_APPLE_PRODUCT_KBD]    = "Apple Keyboard",
++    [STR_APPLE_PRODUCT_MOUSE]  = "Apple Mighty Mouse",
++    [STR_APPLE_PRODUCT_TABLET] = "Apple Magic Trackpad",
++    [STR_APPLE_SERIAL_COMPAT]  = "42",
++    [STR_APPLE_CONFIG_KBD]     = "HID Keyboard",
++    [STR_APPLE_CONFIG_MOUSE]   = "HID Mouse",
++    [STR_APPLE_CONFIG_TABLET]  = "HID Tablet",
++    [STR_APPLE_SERIAL_KBD]     = "68284",
++    [STR_APPLE_SERIAL_MOUSE]   = "89126",
++    [STR_APPLE_SERIAL_TABLET]  = "28754",
++};
++
++/* apple-kbd: parent usb-kbd, VID:PID 0x05ac:0x024f ("Apple Keyboard"). */
++static const USBDescDevice desc_device_apple_kbd = {
++    .bcdUSB                        = 0x0100,
++    .bMaxPacketSize0               = 8,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_KBD,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_keyboard,
++        },
++    },
++};
++
++static const USBDescDevice desc_device_apple_kbd2 = {
++    .bcdUSB                        = 0x0200,
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .iConfiguration        = STR_APPLE_CONFIG_KBD,
++            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
++            .bMaxPower             = 50,
++            .nif = 1,
++            .ifs = &desc_iface_keyboard2,
++        },
++    },
++};
++
++static const USBDesc desc_apple_kbd = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x024f,
++        .bcdDevice         = 0x0170,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_KBD,
++        .iSerialNumber     = STR_APPLE_SERIAL_KBD,
++    },
++    .full = &desc_device_apple_kbd,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
++};
++
++static const USBDesc desc_apple_kbd2 = {
++    .id = {
++        .idVendor          = 0x05ac,
++        .idProduct         = 0x024f,
++        .bcdDevice         = 0x0170,
++        .iManufacturer     = STR_APPLE_MANUFACTURER,
++        .iProduct          = STR_APPLE_PRODUCT_KBD,
++        .iSerialNumber     = STR_APPLE_SERIAL_KBD,
++    },
++    .full = &desc_device_apple_kbd,
++    .high = &desc_device_apple_kbd2,
++    .str  = desc_strings_apple,
++    .msos = &desc_msos_suspend,
++};
++
++static void usb_apple_kbd_realize(USBDevice *dev, Error **errp)
++{
++    usb_hid_initfn(dev, HID_KEYBOARD, &desc_apple_kbd, &desc_apple_kbd2, errp);
++}
++
++static void usb_apple_kbd_class_initfn(ObjectClass *klass, const void *data)
++{
++    USBDeviceClass *uc = USB_DEVICE_CLASS(klass);
++
++    uc->realize      = usb_apple_kbd_realize;
++    uc->product_desc = "Apple Keyboard";
++}
++
++static const TypeInfo usb_apple_kbd_info = {
++    .name          = "apple-kbd",
++    .parent        = "usb-kbd",
++    .class_init    = usb_apple_kbd_class_initfn,
++};
++
+ static void usb_hid_register_types(void)
+ {
+     type_register_static(&usb_hid_type_info);
+@@ -871,6 +1009,7 @@
+     usb_legacy_register("usb-mouse", "mouse", NULL);
+     type_register_static(&usb_keyboard_info);
+     usb_legacy_register("usb-kbd", "keyboard", NULL);
++    type_register_static(&usb_apple_kbd_info);
+ }
+ 
+ type_init(usb_hid_register_types)

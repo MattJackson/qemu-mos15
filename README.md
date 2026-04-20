@@ -15,7 +15,7 @@ host side of Apple's **ParavirtualizedGraphics** protocol (the
 |---|---|---|
 | `hw/misc/applesmc.c` | Apple SMC device emulation | Real `GET_KEY_BY_INDEX_CMD` (upstream returned 4 zero bytes, causing macOS to retry at ~1,800 errors/sec, burning `kernel_task` 70% + `WindowServer` 509% CPU). Adds `#KEY` total-count and ~80 realistic iMac20,1 sensor values from real-hardware reference data. Adds `HE2N`, `WDTC`, and graphics-power keys macOS reads on boot. |
 | `hw/display/vmware_vga.c` | VMware SVGA II display device | Extends the upstream device with capability bits the modern macOS driver expects (FIFO, pitchlock, alpha blend, multimon). Lifts the resolution ceiling toward 4K. |
-| `hw/usb/dev-hid.c` | USB HID devices | Apple PnP IDs (vendor `0x05ac`) for keyboard/mouse/trackpad so macOS doesn't run the Keyboard Setup Assistant on first boot. |
+| `hw/usb/dev-hid.c` | USB HID devices | Adds three opt-in wrapper types - `apple-kbd` / `apple-mouse` / `apple-tablet` - that inherit from `usb-kbd` / `usb-mouse` / `usb-tablet` and advertise Apple vendor ID `0x05ac` with real Apple product IDs at USB enumeration. Prevents macOS's Keyboard Setup Assistant from blocking first boot. The base `usb-kbd` / `usb-mouse` / `usb-tablet` devices are byte-for-byte upstream; only the new opt-in types carry Apple identity. |
 
 ## Quick start
 

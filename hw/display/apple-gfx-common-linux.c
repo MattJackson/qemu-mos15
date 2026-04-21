@@ -28,8 +28,6 @@
 #include "trace.h"
 
 #define PG_PCI_BAR_MMIO 0
-#define PG_PCI_VENDOR_ID 0x106b  /* Apple Inc. */
-#define PG_PCI_DEVICE_ID 0x1b30  /* ParavirtualizedGraphics */
 #define PG_PCI_MAX_MSI_VECTORS 32
 
 static const AppleGFXDisplayMode apple_gfx_default_modes[] = {

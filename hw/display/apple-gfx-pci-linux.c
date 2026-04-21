@@ -29,14 +29,17 @@
  * PCI device identification.
  *
  * x86_64 macOS Sequoia AppleParavirtGPU.kext matches on
- * IOPCIMatch = 0xEEEE106B — vendor 0xEEEE / device 0x106B. The
- * Apple-Silicon VMApple device ID (0x1B30) is NOT a match key on
- * the x86 kext. Advertising the wrong pair is a silent no-op: the
- * PCI device appears on bus but no driver binds. Confirmed via
- * paravirt-re/kext-inventory.md + baselines/phase-1d-attach.txt.
+ * IOPCIMatch = "0xEEEE106B". IOKit encodes this pair as
+ *   (device_id << 16) | vendor_id
+ * so the actual values to set on the PCI device are
+ *   vendor_id = 0x106B, device_id = 0xEEEE.
+ * Confirmed by the Phase -1.D.1 attach commit (qemu-mos15@c785645)
+ * which produced a real AppleParavirtGPUControl::start() trace.
  */
-#define PG_PCI_VENDOR_ID 0xEEEE
-#define PG_PCI_DEVICE_ID 0x106B
+#define PG_PCI_VENDOR_ID 0x106B
+#define PG_PCI_DEVICE_ID 0xEEEE
+#define PG_PCI_SUBSYSTEM_VENDOR_ID 0x106B
+#define PG_PCI_SUBSYSTEM_ID 0xEEEE
 #define PG_PCI_MAX_MSI_VECTORS 32
 #define PG_PCI_BAR_MMIO 0
 
@@ -209,7 +212,9 @@ apple_gfx_pci_class_init(ObjectClass *klass, const void *data)
 
     pci->vendor_id = PG_PCI_VENDOR_ID;
     pci->device_id = PG_PCI_DEVICE_ID;
-    pci->class_id = PCI_CLASS_DISPLAY_OTHER;
+    pci->subsystem_vendor_id = PG_PCI_SUBSYSTEM_VENDOR_ID;
+    pci->subsystem_id = PG_PCI_SUBSYSTEM_ID;
+    pci->class_id = PCI_CLASS_DISPLAY_VGA;
     pci->realize = apple_gfx_pci_realize;
 
     /*

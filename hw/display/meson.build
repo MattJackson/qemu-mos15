@@ -66,19 +66,20 @@ system_ss.add(when: [pvg, 'CONFIG_MAC_PVG_MMIO'],    if_true: [files('apple-gfx.
 
 # Apple ParavirtualizedGraphics PCI device (Linux C port).
 # Declared self-contained here so we do not need to overlay root meson.build.
-# If libapplegfx-vulkan is not present on the build host, the device silently
-# drops out of the build (required: false). Kconfig default-yes-on-PCI_DEVICES
-# is harmless in that case — the meson gate keeps the source files out.
+# HARD-FAIL if libapplegfx-vulkan pkg-config is missing when the device is
+# enabled — previously silent-dropped from the build (`required: false`),
+# producing a QEMU binary that happily compiled without the device. That
+# "success with missing feature" mode bit us in docker-build iterations on
+# 2026-04-20; promote to `required: true` so the builder sees the gap
+# immediately at meson setup instead of at runtime.
 if config_all_devices.has_key('CONFIG_APPLE_GFX_PCI_LINUX')
-  libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: false)
-  if libapplegfx_vulkan.found()
-    applegfx_ss = ss.source_set()
-    applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
-      files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
-      libapplegfx_vulkan,
-    ])
-    hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
-  endif
+  libapplegfx_vulkan = dependency('libapplegfx-vulkan', required: true)
+  applegfx_ss = ss.source_set()
+  applegfx_ss.add(when: 'CONFIG_APPLE_GFX_PCI_LINUX', if_true: [
+    files('apple-gfx-pci-linux.c', 'apple-gfx-common-linux.c'),
+    libapplegfx_vulkan,
+  ])
+  hw_display_modules += {'apple_gfx_pci_linux': applegfx_ss}
 endif
 
 if config_all_devices.has_key('CONFIG_VIRTIO_GPU')

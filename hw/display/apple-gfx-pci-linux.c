@@ -28,7 +28,7 @@
 /* PCI device identification */
 #define PG_PCI_VENDOR_ID 0x106b  /* Apple Inc. */
 #define PG_PCI_DEVICE_ID 0x1b30  /* ParavirtualizedGraphics */
-#define PG_PCI_MAX_MSI_VECTORS 64
+#define PG_PCI_MAX_MSI_VECTORS 32
 #define PG_PCI_BAR_MMIO 0
 
 /*

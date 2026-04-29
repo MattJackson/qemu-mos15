@@ -461,6 +461,17 @@ apple_gfx_frame_ready_bh(void *opaque)
 }
 
 static void
+apple_gfx_vblank_tick(void *opaque)
+{
+    AppleGFXLinuxState *s = opaque;
+    lagfx_display_tick_vblank(s->lagfx_dev, s,
+                              apple_gfx_write_memory);
+    timer_mod(&s->vblank_timer,
+              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+              NANOSECONDS_PER_SECOND / 60);
+}
+
+static void
 apple_gfx_frame_ready(void *opaque)
 {
     AppleGFXLinuxState *s = opaque;
@@ -710,6 +721,15 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
     };
 
     s->con = graphic_console_init(dev, 0, &apple_gfx_hw_ops, s);
+
+    /* VBlank timer: ticks at ~60 Hz to advance the guest's vblank
+     * counter via lagfx_ops_display_tick_vblank(). WindowServer
+     * waits on this counter before submitting display updates. */
+    timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL,
+                  apple_gfx_vblank_tick, s);
+    timer_mod(&s->vblank_timer,
+              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+              NANOSECONDS_PER_SECOND / 60);
 
     return true;
 }

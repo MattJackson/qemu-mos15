@@ -395,18 +395,18 @@ apple_gfx_frame_ready_bh(void *opaque)
 
     BQL_LOCK_GUARD();
 
-    /*
-     * Surface not yet created (pre-mode_changed) or library not up:
-     * drop this token silently and wait for the next frame_ready.
-     */
-    if (qatomic_read(&s->pending_frames) <= 0 ||
-        !s->surface || !s->lagfx_disp) {
+    if (qatomic_read(&s->pending_frames) <= 0 || !s->lagfx_disp) {
         if (qatomic_read(&s->pending_frames) > 0) {
             qatomic_fetch_sub(&s->pending_frames, 1);
         }
         return;
     }
     qatomic_fetch_sub(&s->pending_frames, 1);
+
+    if (!s->surface) {
+        s->surface = qemu_create_displaysurface(1920, 1080);
+        dpy_gfx_replace_surface(s->con, s->surface);
+    }
 
     dst      = surface_data(s->surface);
     stride   = surface_stride(s->surface);

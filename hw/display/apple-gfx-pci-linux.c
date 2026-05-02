@@ -6,6 +6,15 @@
  *
  * Linux C port of apple-gfx-pci.m. Uses libapplegfx-vulkan for backend
  * instead of Apple's ParavirtualizedGraphics framework.
+ *
+ * RE annotations (paravirt-re/):
+ *   - Cursor pipeline (stage 20%): cursor-rendering-stage-20.md
+ *     Guest emits 0x13/0x14 on display vchan sub-channels (opcode 0x04).
+ *   - Display vchan + opcode dispatch: PGFIFO-sub-channel-opcode-table.md,
+ *     flows/display-init-flow.md, flows/display-swap-flow.md
+ *   - PCI device identification: see paravirt-re/PROTOCOL.md §2.1,
+ *     and AppleParavirtGPU.kext matching on IOPCIMatch "0xEEEE106B".
+ *   - GPU cores property: gpu-cores-implementation-spec.md
  */
 
 #include "qemu/osdep.h"
@@ -137,7 +146,49 @@ apple_gfx_pci_realize(PCIDevice *pci_dev, Error **errp)
     }
     device_desc.thread_count = common->gpu_cores;
 
-    /* Initialize common device state */
+/*
+ * Initialize common device state — this is where the display
+ * callbacks (frame_ready, mode_changed, cursor_glyph, cursor_moved,
+ * cursor_show) are registered with libapplegfx-vulkan.
+ *
+ * Cursor pipeline (RE-confirmed at paravirt-re/cursor-rendering-stage-20.md):
+ *   Guest emits 0x13 CmdDisplayCursorShow →
+ *     libapplegfx handler → cursor_moved + cursor_show callbacks →
+ *     QEMU dpy_mouse_set() (cursor position + visibility)
+ *
+ *   Guest emits 0x14 CmdDisplayCursorGlyph →
+ *     libapplegfx handler → cursor_glyph callback →
+ *     QEMU dpy_cursor_define() (cursor image upload, BGRA→RGBA)
+ *
+ * Both opcodes travel on display vchan sub-channels (not main
+ * display channel) — created via opcode 0x04 CmdDefineChildFIFO.
+ * See paravirt-re/flows/display-init-flow.md and
+ * paravirt-re/AppleParavirtDisplayPipe-vtable-decoded.md.
+ *
+ * Stage 20% target: cursor visible + movable. Stage 30%+ builds
+ * on this with actual rendering via render opcodes.
+ *
+ * Cursor visibility status (2026-04-30):
+ *   - Callbacks NOW FIRE in QEMU (commit 0511f24 wires up
+ *     cursor opcode dispatch via protocol.c fix).
+ *   - s->cursor_show flag is set by apple_gfx_cursor_show().
+ *   - dpy_mouse_set() is called with s->cursor_show as visibility.
+ *   - DEADLOCK BLOCKER: WindowServer hangs in ABBA deadlock,
+ *     so cursor may not be visible in practice (WS never completes
+ *     display initialization to show cursor).
+ *   - See paravirt-re/library/stage-20-cursor-status.md.
+ *
+ * What's needed for noVNC to show cursor:
+ *   1. Deadlock must be resolved (stage 10% blocker).
+ *   2. VNC server must pick up cursor changes via QEMU's
+ *      dpy_cursor_define() + dpy_mouse_set() callbacks.
+ *   3. For hardware cursor: QEMU's VNC uses cursor data from
+ *      dpy_cursor_define(); ensure BGRA→RGBA conversion is correct.
+ *   4. For software cursor (fallback): guest renders cursor into
+ *      framebuffer; requires working render opcodes (stage 30%+).
+ *   5. noVNC cursor visibility also depends on VNC encoding
+ *      (rich cursor encoding via QEMU's cursor data path).
+ */
     if (!apple_gfx_common_realize(common, DEVICE(pci_dev), &device_desc, errp)) {
         return;
     }

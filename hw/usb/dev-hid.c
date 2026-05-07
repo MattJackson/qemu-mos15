@@ -1321,6 +1321,13 @@ static const USBDesc desc_apple_magic_kbd = {
         .iProduct          = STR_AMK_PRODUCT,
         .iSerialNumber     = STR_AMK_SERIAL,
     },
+    /*
+     * Real Magic Keyboard runs at USB full-speed (12 Mb/s) despite
+     * declaring bcdUSB=0x0200. Advertise the same config under both
+     * .full and .high so QEMU's USB stack can pick whichever speed
+     * the host controller (qemu-xhci) negotiates.
+     */
+    .full = &desc_device_apple_magic_kbd,
     .high = &desc_device_apple_magic_kbd,
     .str  = desc_strings_amk,
 };

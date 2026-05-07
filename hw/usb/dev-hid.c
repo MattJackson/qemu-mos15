@@ -1387,10 +1387,48 @@ static void usb_apple_magic_kbd_handle_control(USBDevice *dev, USBPacket *p,
         return;
     case HID_SET_PROTOCOL:
         return;
-    case HID_GET_REPORT:
+    case HID_GET_REPORT: {
+        /*
+         * Phase 0: blanket-ACK feature GET_REPORT with zero-filled
+         * payload of the declared report size. Stalling these would
+         * send AppleUSBTopCaseHIDDriver into a tight retry loop on
+         * match-probe, which has empirically been observed to amplify
+         * through KVM into host scheduler pressure (the docker host
+         * wedge of 2026-05-07). Linux's apple_probe path issues no
+         * control transfers, so the wedge cause must be macOS-specific
+         * feature-report polling.
+         *
+         * Match the per-Report-ID sizes declared in our HID Report
+         * Descriptor (above):
+         *   0xe0 → 4 bytes  (input only, but driver may probe Feature)
+         *   0x9a → 1 byte
+         *   0x90 → 2 bytes  (AC/charge bits + battery byte)
+         * Default:    return zeros of the requested 'length' bytes.
+         */
+        uint8_t report_id = value & 0xff;
+        uint16_t reply_len;
+        switch (report_id) {
+        case 0xe0: reply_len = 4; break;
+        case 0x9a: reply_len = 1; break;
+        case 0x90: reply_len = 2; break;
+        default:   reply_len = (length > 0 && length <= 64) ? length : 1;
+        }
+        if (reply_len > length) {
+            reply_len = length;
+        }
+        memset(data, 0, reply_len);
+        p->actual_length = reply_len;
+        return;
+    }
     case HID_SET_REPORT:
-        /* Phase 0: stall — no reports flowing yet. */
-        break;
+        /*
+         * Phase 0: silently accept SET_REPORT writes (e.g. raw-multi-
+         * touch enable on the trackpad). Returning without changing
+         * p->status acknowledges the transfer; data ignored for now.
+         * Phase 1+: parse vendor SET_REPORTs (0x02, 0xF1) per Linux
+         * magicmouse_enable_multitouch().
+         */
+        return;
     }
 
     p->status = USB_RET_STALL;

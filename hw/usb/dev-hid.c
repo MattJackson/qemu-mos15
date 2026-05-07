@@ -1334,10 +1334,18 @@ static const USBDesc desc_apple_magic_kbd = {
 
 static void usb_apple_magic_kbd_realize(USBDevice *dev, Error **errp)
 {
-    dev->usb_desc = &desc_apple_magic_kbd;
+    /*
+     * uc->usb_desc set in class_init handles dev->usb_desc selection.
+     * Mirror Wacom's pattern: just set up the serial + descriptors.
+     */
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
 }
+
+static const VMStateDescription vmstate_apple_magic_kbd = {
+    .name = "apple-magic-keyboard",
+    .unmigratable = 1,
+};
 
 static void usb_apple_magic_kbd_handle_reset(USBDevice *dev)
 {
@@ -1423,6 +1431,7 @@ static void usb_apple_magic_kbd_class_initfn(ObjectClass *klass,
     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
     dc->desc           = "Apple Magic Keyboard with Numeric Keypad "
                          "(USB-mode emulator, vendor HID protocol)";
+    dc->vmsd           = &vmstate_apple_magic_kbd;
 }
 
 static const TypeInfo usb_apple_magic_kbd_info = {

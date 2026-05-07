@@ -658,12 +658,12 @@ static void applesmc_isa_realize(DeviceState *dev, Error **errp)
     {
         int count = 1;  /* include #KEY itself */
         struct AppleSMCData *def;
-        QLIST_FOREACH(def, &s->data_def, node) count++;
         static char numkey_buf[4];
-        numkey_buf[0] = (count >> 24) & 0xff;
-        numkey_buf[1] = (count >> 16) & 0xff;
-        numkey_buf[2] = (count >>  8) & 0xff;
-        numkey_buf[3] =  count        & 0xff;
+
+        QLIST_FOREACH(def, &s->data_def, node) {
+            count++;
+        }
+        stl_be_p(numkey_buf, count);
         applesmc_add_key(s, "#KEY", 4, numkey_buf);
     }
 }

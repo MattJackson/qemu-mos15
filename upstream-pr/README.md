@@ -10,10 +10,10 @@ description (`PR_DESCRIPTION.md`), and a testing recipe
 
 | Package | Subject | Size | Status |
 |---------|---------|-----:|--------|
-| [A](./applesmc-fix/) | Fix `GET_KEY_BY_INDEX` and populate Apple SMC key set | 2 patches | **SUBMITTED 2026-05-06** ([lore](https://lore.kernel.org/qemu-devel/20260507040153.14565-1-matthew@pq.io/)) |
+| [A](./applesmc-fix/) | Fix `GET_KEY_BY_INDEX` and populate Apple SMC key set | 2 patches | **SUBMITTED 2026-05-06**, **v2 sent 2026-05-07** addressing Maydell review ([lore v1](https://lore.kernel.org/qemu-devel/20260507040153.14565-1-matthew@pq.io/), [v2 search](https://lore.kernel.org/qemu-devel/20260507152020.48728-1-matthew@pq.io/)) |
 | [B](./apple-gfx-pci-linux/) | Linux-host port of `apple-gfx-pci` | 9 patches | **Blocked-ready** (library at `8edc43c`, packaging-path decision pending) — internal mos final-product helper, hold |
 | [C](./vmware-svga-caps/) | VMware SVGA II capability bits + 5K cap | 4 patches | **Ready to submit** |
-| [D](./usb-hid-apple-ids/) | USB HID Apple vendor IDs | 3 patches | **Ready to submit** |
+| ~~D~~ | ~~USB HID Apple vendor IDs~~ | — | **WITHDRAWN 2026-05-07** — descriptor-only wrappers were a wrong-shape solution; broke macOS recovery's HID stack. Replaced by in-progress `apple-magic-keyboard` / `apple-magic-tablet` real-protocol emulators (separate workstream, see `mos/memory/project_apple_magic_hid_emulator_2026_05_07.md`). |
 
 Ready-to-submit: A, C, D (3 of 4). B is "blocked-ready":
 the library side (`libapplegfx-vulkan`) has reached a stable

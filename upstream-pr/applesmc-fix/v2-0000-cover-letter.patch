@@ -1,0 +1,123 @@
+From 90a15769754d90ff97e22ffab652031e87cbe49e Mon Sep 17 00:00:00 2001
+In-Reply-To: <20260507040153.14565-1-matthew@pq.io>
+References: <20260507040153.14565-1-matthew@pq.io>
+From: Matthew Jackson <matthew@pq.io>
+Date: Thu, 7 May 2026 08:19:08 -0700
+Subject: [PATCH v2 0/2] hw/misc/applesmc: fix GET_KEY_BY_INDEX iteration and
+ populate Apple SMC key set
+
+v1: https://lore.kernel.org/qemu-devel/20260507040153.14565-1-matthew@pq.io/
+
+Changes in v2 (all in patch 2/2, applesmc_isa_realize() #KEY block):
+
+  * Add braces around the QLIST_FOREACH() count loop body
+    (qemu coding style: loops always need braces, even single-line).
+    Reported-by: Peter Maydell <peter.maydell@linaro.org>
+
+  * Replace the manual 4-byte big-endian byte-shift packing of
+    `count` into `numkey_buf` with a single stl_be_p() call.
+    Reported-by: Peter Maydell <peter.maydell@linaro.org>
+
+Patch 1/2 is unchanged from v1.
+
+Peter also noted that the static-buffer "must remain valid forever"
+contract that applesmc_add_key() requires is awkward — fair, but
+fixing it (e.g. switching the key table to a glib hashtable that
+copies values) is independent from this series and not reported as
+performance-noticeable in profiles. Happy to follow up with a
+hashtable conversion as a separate series if the maintainers
+think it's worth doing.
+
+Original v1 cover letter follows below.
+
+---
+
+The QEMU applesmc device implements just enough of the Apple SMC PMIO
+protocol to satisfy the OSK boot check on older macOS versions. On
+modern macOS guests (x86 10.14+, all of the 15.x series) the real
+AppleSMC kext enumerates the SMC key space at boot via
+APPLESMC_GET_KEY_BY_INDEX_CMD (0x12). The current device only
+acknowledges APPLESMC_READ_CMD (0x10) at the command port; every
+other command falls through to the default arm of the switch and
+sets ST_1E_BAD_CMD.
+
+The macOS driver interprets the resulting 0x82 reply as "spurious
+data" and enters a retry loop that floods the kernel log with
+kSMCSpuriousData (0x81) / kSMCKeyNotFound errors at roughly 1800
+events per second, pegging kernel_task at ~70% CPU and WindowServer
+at ~509% CPU. This reproduces reliably on any recent macOS 15 guest
+booted with -device isa-applesmc,osk=<valid-OSK>.
+
+This two-patch series fixes the protocol-level bug and rounds out
+the SMC key table to a complete iMac20,1 profile.
+
+  Patch 1: protocol-level fix
+    - Accept WRITE_CMD, GET_KEY_BY_INDEX_CMD, GET_KEY_TYPE_CMD at the
+      command port (in addition to READ_CMD).
+    - Implement the indexed-iteration walker (returns real key names
+      from s->data_def, or APPLESMC_ST_1E_BAD_INDEX 0xb8 once the
+      index is past the end so the guest stops iterating).
+    - Implement GET_KEY_TYPE returning a 6-byte type/size/attr
+      response matching VirtualSMC's kern_pmio.cpp behaviour.
+    - Accept and log WRITE_CMD silently.
+    - Replace the unknown-key NOEXIST (0x84) reply with a zeroed
+      payload of the requested length, logged at LOG_UNIMP.
+    - Route the BAD_CMD path through qemu_log_mask(LOG_GUEST_ERROR).
+    - Fix MSSD initialiser typo ("\0x3" -> "\x03"). The original
+      literal was three bytes ('\0', 'x', '3') truncated to one
+      ('\0') by the size argument, so MSSD has been silently
+      returning 0 since the device was introduced; the corrected
+      value matches what a real iMac20,1 SMC reports.
+
+  Patch 2: populate the key table
+    - Add 94 keys covering the categories macOS queries on a Sequoia
+      15.7.5 guest: 28 temperature sensors (sp78), 4 fan keys (fpe2),
+      12 power-rail keys, 6 DIMM keys, 11 SMC-internal bookkeeping,
+      13 motion-sensor / wireless, 3 write targets (HE0N/MSDW/NTOK),
+      2 power-management gates (HE2N/WDTC), 8 platform-identity /
+      probe keys, plus the Apple-canonical #KEY total-count.
+    - Sensor values match a real iMac20,1 idle probe published at
+      https://linux-hardware.org/?probe=999fc708a4&log=sensors:
+      CPU 40-51 C, GPU 36-42 C, fan at 1200 RPM (= F0Mn idle), etc.
+
+Measured impact (macOS 15.7.5 guest, iMac20,1 profile):
+
+   Metric           | Before   | After
+   -----------------|---------:|------:
+   SMC errors / 5s  |   9,225  |     2
+   kernel_task CPU  |    70 %  |  ~2 %
+   WindowServer CPU |   509 %  |  ~6 %
+
+A note for review on the zero-valued keys in patch 2: the 26 keys
+covering DIMM / SMC bookkeeping / motion-sensor / wireless rails are
+registered with present-with-zero values rather than omitted. macOS
+distinguishes "absent" (NOEXIST reply, retry-poll) from "broken"
+(present, value 0, accepted-and-ignored). Registering these keys
+present-with-zero stops the retry-poll behaviour without asserting
+any specific value. If the maintainer prefers a tighter scope for
+this series I am happy to drop any subset and follow up; the
+present-with-zero approach was driven by which keys macOS observed
+querying during boot.
+
+Backwards compatibility: legacy macOS guests (10.11-10.13) which do
+not iterate the key space via GET_KEY_BY_INDEX boot unchanged. The
+original six keys (REV/OSK0/OSK1/NATJ/MSSP/MSSD) are still present
+and respond with the same values, modulo the MSSD typo fix in patch
+1 which corrects MSSD to the value a real iMac20,1 SMC reports.
+
+Tested against current master (post v11.0.0). Builds clean on
+gcc-13 / clang-17 with --enable-werror. Sequoia 15.7.5 guest boots
+to login screen with the SMC retry storm absent from the kernel
+log; smoke test recipe in TESTING.md alongside the series.
+
+Matthew Jackson (2):
+  hw/misc/applesmc: fix GET_KEY_BY_INDEX to return real keys, accept
+    WRITE/TYPE commands
+  hw/misc/applesmc: populate Apple SMC key table
+
+ hw/misc/applesmc.c | 346 +++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 338 insertions(+), 8 deletions(-)
+
+-- 
+2.50.1 (Apple Git-155)
+

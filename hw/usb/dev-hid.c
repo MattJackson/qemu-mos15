@@ -1561,7 +1561,7 @@ static void usb_apple_magic_kbd_handle_control(USBDevice *dev, USBPacket *p,
          */
         uint8_t report_id = value & 0xff;
         uint8_t report_type = (value >> 8) & 0xff;
-        uint16_t reply_len;
+        uint16_t reply_len = 0;
 
         if (index == 1) {
             uint8_t buf[AMK_BOOT_REPORT_LEN];
@@ -1576,18 +1576,29 @@ static void usb_apple_magic_kbd_handle_control(USBDevice *dev, USBPacket *p,
                 p->actual_length = reply_len;
                 return;
             }
-            /* Other report types/IDs on the boot iface — ack with zeros. */
-            reply_len = (length > 0 && length <= 64) ? length : 1;
-            memset(data, 0, reply_len);
-            p->actual_length = reply_len;
-            return;
+            /*
+             * Unknown report type/ID on the boot iface — STALL.
+             * macOS speculatively probes Feature reads for IDs not in the
+             * descriptor (e.g. 0x02, 0x03); a real device responds with
+             * a STALL there and macOS moves on. Returning zero-fill
+             * causes the host's HID parser to treat the response as a
+             * valid-but-malformed report and stall the IOHIDInterface
+             * during ::start (the (a,4020001) busy timeout).
+             */
+            break;
         }
 
+        /* Vendor iface: same logic — only declared report IDs answer. */
         switch (report_id) {
         case 0xe0: reply_len = 4; break;
         case 0x9a: reply_len = 1; break;
         case 0x90: reply_len = 2; break;
-        default:   reply_len = (length > 0 && length <= 64) ? length : 1;
+        default:
+            /* Unknown vendor report ID — STALL (real device behaviour). */
+            break;
+        }
+        if (reply_len == 0) {
+            break;  /* falls through to STALL */
         }
         if (reply_len > length) {
             reply_len = length;

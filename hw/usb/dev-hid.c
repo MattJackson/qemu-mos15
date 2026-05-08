@@ -2000,6 +2000,9 @@ static void amt_emit_pointer_report(USBAppleMagicTabletState *s)
     buf[6] = 0x00;
     buf[7] = 0x00;
 
+    fprintf(stderr, "[AMT-DBG] emit ptr dx=%d dy=%d btn=%d pending=%d/%d\n",
+            dx, dy, s->button_left, s->pending_dx, s->pending_dy);
+
     amt_enqueue(s, buf, sizeof(buf));
     usb_wakeup(s->intr, 0);
 }
@@ -2025,9 +2028,13 @@ static void amt_input_event(DeviceState *dev, QemuConsole *src,
 {
     USBAppleMagicTabletState *s = USB_APPLE_MAGIC_TABLET(dev);
 
+    fprintf(stderr, "[AMT-DBG] input_event type=%d\n", evt->type);
+
     switch (evt->type) {
     case INPUT_EVENT_KIND_REL: {
         InputMoveEvent *move = evt->u.rel.data;
+        fprintf(stderr, "[AMT-DBG]   REL axis=%d val=%lld\n",
+                move->axis, (long long)move->value);
         if (move->axis == INPUT_AXIS_X) {
             s->pending_dx += move->value;
         } else if (move->axis == INPUT_AXIS_Y) {
@@ -2049,6 +2056,8 @@ static void amt_input_event(DeviceState *dev, QemuConsole *src,
          * clamps with amt_clamp_i8 to ±127 if the delta exceeds that.
          */
         InputMoveEvent *move = evt->u.abs.data;
+        fprintf(stderr, "[AMT-DBG]   ABS axis=%d val=%lld\n",
+                move->axis, (long long)move->value);
         if (move->axis == INPUT_AXIS_X) {
             int32_t scaled = (move->value * 1920) / 0x7fff;
             if (s->last_abs_x >= 0) {
@@ -2086,6 +2095,9 @@ static void amt_input_event(DeviceState *dev, QemuConsole *src,
 static void amt_input_sync(DeviceState *dev)
 {
     USBAppleMagicTabletState *s = USB_APPLE_MAGIC_TABLET(dev);
+
+    fprintf(stderr, "[AMT-DBG] sync pending=%d dx=%d dy=%d\n",
+            s->pending_event, s->pending_dx, s->pending_dy);
 
     if (!s->pending_event) {
         return;
@@ -2239,6 +2251,11 @@ static void usb_apple_magic_tablet_handle_data(USBDevice *dev, USBPacket *p)
         }
         USBAppleMagicTabletReport *r = &s->queue[s->q_tail];
         s->q_tail = (s->q_tail + 1) & (AMT_QUEUE_DEPTH - 1);
+        fprintf(stderr,
+                "[AMT-DBG] IN ep1 deliver len=%u rid=0x%02x dx=%d dy=%d\n",
+                r->len, r->data[0],
+                r->len >= 4 ? (int8_t)r->data[2] : 0,
+                r->len >= 4 ? (int8_t)r->data[3] : 0);
         usb_packet_copy(p, r->data, r->len);
         return;
     }

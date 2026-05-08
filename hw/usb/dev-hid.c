@@ -2136,12 +2136,15 @@ static void usb_apple_magic_tablet_realize(USBDevice *dev, Error **errp)
     s->last_abs_y = -1;
     s->pending_event = false;
 
-    s->heartbeat_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
-                                      amt_heartbeat_cb, s);
-
-    /* Start the 1Hz heartbeat. The first tick fires 1 s after realize. */
-    timer_mod(s->heartbeat_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + AMT_HEARTBEAT_NS);
+    /*
+     * Heartbeat disabled: the boot-mouse Trackpad/Boot interface descriptor
+     * doesn't declare Report ID 0x01, so an unsolicited 0x01 frame on the
+     * IN endpoint causes macOS's HID parser to stop polling the endpoint
+     * (~24 min after boot in repro). The real device's heartbeat lives on
+     * the vendor "Device Management" interface (Report 0x52 / 0x90 family),
+     * which this single-interface emulator doesn't expose.
+     */
+    s->heartbeat_timer = NULL;
 
     s->input_handler = qemu_input_handler_register(DEVICE(dev),
                                                    &amt_input_handler);

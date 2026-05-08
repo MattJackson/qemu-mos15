@@ -1616,7 +1616,15 @@ static void usb_apple_magic_kbd_handle_control(USBDevice *dev, USBPacket *p,
          *
          * Interface 1 (boot keyboard): ACK SET_REPORT (LED state).
          * We don't drive any host-visible LEDs yet but must not stall.
+         *
+         * MUST set actual_length: the USB layer reports back the
+         * number of bytes accepted, which the host uses to confirm
+         * the write succeeded. Without it the host reads "0 bytes
+         * accepted" and retries. Trace 2026-05-08 showed macOS
+         * sending the same LED SET_REPORT 5 times back-to-back —
+         * exactly that retry pattern.
          */
+        p->actual_length = length;
         return;
     }
 

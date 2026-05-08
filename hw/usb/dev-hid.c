@@ -1991,6 +1991,14 @@ static void amt_emit_pointer_report(USBAppleMagicTabletState *s)
     s->pending_dx -= dx;
     s->pending_dy -= dy;
 
+    /*
+     * Per real-device capture (paravirt-re/library/apple-magic-hid/captures/
+     * trackpad-input-reports-2026-05-07.txt) byte 7 carries surface state:
+     *   0x03 = finger in contact (active frame)
+     *   0x02 = finger lifted
+     * AppleMultitouchTrackpadHIDEventDriver discards frames where byte 7
+     * is 0 — that's why we saw 13 deliveries land but cursor stay parked.
+     */
     buf[0] = 0x02;
     buf[1] = s->button_left ? 0x01 : 0x00; /* bit 0 = Button 1 */
     buf[2] = (uint8_t)dx;
@@ -1998,7 +2006,7 @@ static void amt_emit_pointer_report(USBAppleMagicTabletState *s)
     buf[4] = 0x00;
     buf[5] = 0x00;
     buf[6] = 0x00;
-    buf[7] = 0x00;
+    buf[7] = 0x03; /* finger in contact */
 
     fprintf(stderr, "[AMT-DBG] emit ptr dx=%d dy=%d btn=%d pending=%d/%d\n",
             dx, dy, s->button_left, s->pending_dx, s->pending_dy);

@@ -2257,6 +2257,11 @@ static void usb_apple_magic_tablet_handle_data(USBDevice *dev, USBPacket *p)
 
     if (p->pid == USB_TOKEN_IN && p->ep->nr == 1) {
         if (amt_q_empty(s)) {
+            static unsigned nak_count;
+            if ((++nak_count % 50) == 1) {
+                fprintf(stderr, "[AMT-DBG] IN ep1 NAK #%u (queue empty)\n",
+                        nak_count);
+            }
             p->status = USB_RET_NAK;
             return;
         }
@@ -2270,6 +2275,8 @@ static void usb_apple_magic_tablet_handle_data(USBDevice *dev, USBPacket *p)
         usb_packet_copy(p, r->data, r->len);
         return;
     }
+    fprintf(stderr, "[AMT-DBG] handle_data UNEXPECTED pid=%d ep=%d -> STALL\n",
+            p->pid, p->ep->nr);
     p->status = USB_RET_STALL;
 }
 

@@ -1,6 +1,6 @@
 # Upstream PR staging area
 
-Four discrete patch packages destined for
+Five discrete patch packages destined for
 [qemu-project/qemu](https://gitlab.com/qemu-project/qemu) upstream,
 staged here before submission. Each subdirectory is a
 self-contained PR: cover letter (`SERIES.md`), numbered
@@ -13,9 +13,10 @@ description (`PR_DESCRIPTION.md`), and a testing recipe
 | [A](./applesmc-fix/) | Fix `GET_KEY_BY_INDEX` and populate Apple SMC key set | 2 patches | **SUBMITTED 2026-05-06**, **v2 sent 2026-05-07** addressing Maydell review ([lore v1](https://lore.kernel.org/qemu-devel/20260507040153.14565-1-matthew@pq.io/), [v2 search](https://lore.kernel.org/qemu-devel/20260507152020.48728-1-matthew@pq.io/)) |
 | [B](./apple-gfx-pci-linux/) | Linux-host port of `apple-gfx-pci` | 9 patches | **Blocked-ready** (library at `8edc43c`, packaging-path decision pending) — internal mos final-product helper, hold |
 | [C](./vmware-svga-caps/) | VMware SVGA II capability bits + 5K cap | 4 patches | **Ready to submit** |
-| ~~D~~ | ~~USB HID Apple vendor IDs~~ | — | **WITHDRAWN 2026-05-07** — descriptor-only wrappers were a wrong-shape solution; broke macOS recovery's HID stack. Replaced by in-progress `apple-magic-keyboard` / `apple-magic-tablet` real-protocol emulators (separate workstream, see `mos/memory/project_apple_magic_hid_emulator_2026_05_07.md`). |
+| ~~D~~ | ~~USB HID Apple vendor IDs~~ | — | **WITHDRAWN 2026-05-07** — descriptor-only wrappers were a wrong-shape solution; broke macOS recovery's HID stack. Superseded by Package E. |
+| [E](./apple-magic-hid/) | Apple Magic Keyboard + Magic Trackpad USB-mode emulators | 2 patches | **Ready to submit 2026-05-08** — real-protocol replacement for withdrawn Package D; binds `AppleUSBTopCaseHIDDriver` at probe score 90000; descriptors byte-identical to real hardware |
 
-Ready-to-submit: A, C, D (3 of 4). B is "blocked-ready":
+Ready-to-submit: A, C, E (3 of 5). B is "blocked-ready":
 the library side (`libapplegfx-vulkan`) has reached a stable
 public API at commit `8edc43c` (Phase 2.B complete —
 clear-colour render target + readback, displays render
@@ -113,33 +114,61 @@ flips the capability bits.
 Dependencies: none.
 Ready to submit: **yes, immediately**.
 
-### D - USB HID Apple vendor IDs (ready)
+### ~~D~~ - USB HID Apple vendor IDs (WITHDRAWN 2026-05-07)
 
-Adds three opt-in wrapper devices - `apple-kbd`,
-`apple-mouse`, `apple-tablet` - that inherit from
-`usb-kbd` / `usb-mouse` / `usb-tablet` respectively and
-override only the USB enumeration-time descriptor (Apple
-vendor 0x05ac, real Apple product IDs, Apple Inc.
-manufacturer / product strings). The HID report descriptor
-and data-handling paths are reused 1:1 from the parent
-devices.
+Withdrawn: descriptor-only wrappers were a wrong-shape
+solution. Apple's `AppleUSBTopCaseHIDDriver` claims the
+device by VID/PID/strings but then refuses to bind because
+the report descriptor is standard HID boot-protocol rather
+than Apple's vendor-defined `UsagePage 0xff00` protocol.
+Result on iMac20,1 SMBIOS guests: dangling unclaimed
+device, "Power on Bluetooth Keyboard" recovery UI, all
+input lost. Replaced by Package E.
 
-Zero behaviour change for existing users: `-device
-usb-kbd` / `usb-mouse` / `usb-tablet` and their vmstate
-are unchanged. Migration of existing VMs is unaffected.
+### E - Apple Magic Keyboard + Magic Trackpad emulators (ready 2026-05-08)
 
-Motivation: macOS guests run the Keyboard Setup Assistant
-at first boot for any non-Apple HID keyboard, which costs
-3-5 minutes on interactive installs and hangs headless
-(VNC / SPICE) installs indefinitely. The new devices let
-macOS-guest users opt into Apple-identity HID without
-affecting any other guest.
+Two new self-contained USB-HID devices in `hw/usb/dev-hid.c`:
 
-Supersedes an earlier single-patch draft that re-ID'd the
-base devices globally.
+  * **apple-magic-keyboard** (PID 0x026c) — composite
+    device, two HID interfaces. Interface 0 carries Apple's
+    vendor HID protocol on `UsagePage 0xff00` (vendor input
+    report IDs 0xe0 / 0x9a / 0x90 + 1 Hz battery
+    heartbeat); interface 1 is a standard HID Boot Keyboard
+    wired to QEMU's input subsystem via
+    `qemu_input_handler_register`. Descriptors are
+    byte-identical to a real Magic Keyboard with Numeric
+    Keypad in USB-cable mode.
+  * **apple-magic-tablet** (PID 0x0265) — single vendor HID
+    interface emulating the Magic Trackpad 2 boot-mouse
+    face. Two input reports: 1 Hz heartbeat + boot-mouse
+    pointer frame (~66 Hz cadence). 30 ms idle timer
+    flips the surface state from touching to lifted.
+
+Apple HID driver chain
+(`AppleUSBTopCaseHIDDriver` → `AppleDeviceManagementHIDEvent
+Service` → `AppleUserHIDEventDriver`) binds at probe score
+90000 on macOS 15.7.5 recovery. Setup Assistant does not
+appear. Visible keystroke proof captured via QMP `send-key`
+advancing recovery's language-picker UI.
+
+Zero behaviour change for existing users: `-device usb-kbd`
+/ `usb-mouse` / `usb-tablet` and their vmstate are
+unchanged. Migration of existing VMs is unaffected.
+
+Vendor multitouch protocol (per-finger absolute frames) is
+gated behind a vendor-enable SET_REPORT macOS sends after
+enumeration; out of scope for v1, follow-up series will add
+it once the vendor-enable sequence is reverse-engineered.
 
 Dependencies: none.
-Ready to submit: **yes, immediately**.
+Ready to submit: **yes, pending operator-driven
+`git send-email` from postfix on classe** (same workflow as
+Patch A on 2026-05-06). CC list to be populated by running
+`scripts/get_maintainer.pl` on the patches from a full QEMU
+tree (this fork lacks the scripts/ directory; use the
+operator's classe checkout). Default CCs: `qemu-devel@nongnu.org`,
+`qemu-trivial@nongnu.org`, plus `hw/usb` maintainer (Gerd
+Hoffmann <kraxel@redhat.com>).
 
 ## Submission order recommendation
 
@@ -147,9 +176,9 @@ Ready to submit: **yes, immediately**.
    impact, cleanest diff.
 2. **Package C** (vmware_vga) alongside or immediately after -
    similarly uncontroversial.
-3. **Package D** (USB HID apple-kbd / apple-mouse /
-   apple-tablet wrappers) alongside A and C - additive, zero
-   behaviour change for existing users.
+3. **Package E** (apple-magic-keyboard / apple-magic-tablet)
+   alongside A and C - additive, zero behaviour change for
+   existing users; supersedes withdrawn Package D.
 4. **Package B** (apple-gfx-pci-linux) last, once the
    dependency story is resolved.
 

@@ -2283,15 +2283,6 @@ static void usb_apple_magic_tablet_handle_control(USBDevice *dev, USBPacket *p,
          * boot-mouse face regardless and does not act on it yet.
          */
         return;
-    case VendorDeviceOutRequest | 0x40:
-        /*
-         * Apple vendor command (observed value=0x0514 idx=0x0320 len=0).
-         * Issued post-enumeration and again after the first IN poll;
-         * if STALLed, macOS HID layer never resumes pulling pointer
-         * reports off ep1 — cursor stays parked at 0,0. Silently ack
-         * so the host treats the device as "init complete".
-         */
-        return;
     }
 
     p->status = USB_RET_STALL;

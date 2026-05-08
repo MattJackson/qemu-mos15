@@ -922,29 +922,14 @@ static const TypeInfo usb_keyboard_info = {
 #define AMK_BOOT_REPORT_LEN   10
 #define AMK_BOOT_NUM_KEYS     7
 
-/*
- * 1 Hz vendor 0x90 heartbeat. Real Magic Keyboard firmware emits this
- * cadence regardless of activity. Without it, macOS's userspace HID
- * watchdog (AppleUserHIDEventDriver -> IOHIDInterface) flags the
- * device "busy" after 60 s of silence and stalls the cooked-event
- * pipeline (loginwindow / WindowServer never see input). See
- * paravirt-re/library/apple-magic-hid/wire-formats.md heartbeats
- * section.
- */
-#define AMK_HEARTBEAT_NS      (1000 * SCALE_MS)
-
 typedef struct USBAppleMagicKbdState {
     USBDevice                  dev;
-    USBEndpoint               *vendor_intr;      /* EP1 IN — vendor 0x90 heartbeat */
-    USBEndpoint               *boot_intr;        /* EP2 IN — boot keyboard */
+    USBEndpoint               *boot_intr;        /* EP2 IN */
     QemuInputHandlerState     *input_handler;
     /* Pressed-key state in HID Usage codes (UsagePage 0x07). */
     uint8_t                    boot_modifiers;   /* live modifier byte */
     uint8_t                    boot_keys[AMK_BOOT_NUM_KEYS]; /* live slots */
     bool                       boot_changed;     /* report needs sending */
-    /* Vendor-interface 1 Hz heartbeat. */
-    QEMUTimer                 *heartbeat_timer;
-    bool                       heartbeat_pending; /* heartbeat queued for EP1 IN */
 } USBAppleMagicKbdState;
 
 #define TYPE_USB_APPLE_MAGIC_KBD "apple-magic-keyboard"
@@ -1419,23 +1404,6 @@ static const QemuInputHandler apple_magic_kbd_input_handler = {
     .event = apple_magic_kbd_input_event,
 };
 
-static void apple_magic_kbd_heartbeat_cb(void *opaque)
-{
-    USBAppleMagicKbdState *s = opaque;
-
-    /*
-     * Mark a heartbeat queued and wake the vendor IN endpoint so the
-     * host driver polls. handle_data dequeues it on the next interrupt
-     * transfer. Re-arm the timer for the next 1 Hz tick.
-     */
-    s->heartbeat_pending = true;
-    if (s->vendor_intr) {
-        usb_wakeup(s->vendor_intr, 0);
-    }
-    timer_mod(s->heartbeat_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + AMK_HEARTBEAT_NS);
-}
-
 static void usb_apple_magic_kbd_realize(USBDevice *dev, Error **errp)
 {
     USBAppleMagicKbdState *s = USB_APPLE_MAGIC_KBD(dev);
@@ -1447,18 +1415,10 @@ static void usb_apple_magic_kbd_realize(USBDevice *dev, Error **errp)
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
 
-    s->vendor_intr = usb_ep_get(dev, USB_TOKEN_IN, AMK_EP_VENDOR_IN);
-    s->boot_intr   = usb_ep_get(dev, USB_TOKEN_IN, AMK_EP_BOOT_IN);
+    s->boot_intr = usb_ep_get(dev, USB_TOKEN_IN, AMK_EP_BOOT_IN);
     s->input_handler = qemu_input_handler_register(DEVICE(s),
                                             &apple_magic_kbd_input_handler);
     qemu_input_handler_activate(s->input_handler);
-
-    s->heartbeat_pending = false;
-    s->heartbeat_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
-                                      apple_magic_kbd_heartbeat_cb, s);
-    /* First heartbeat ~1 s after realize, then every AMK_HEARTBEAT_NS. */
-    timer_mod(s->heartbeat_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + AMK_HEARTBEAT_NS);
 }
 
 static const VMStateDescription vmstate_apple_magic_kbd = {
@@ -1473,7 +1433,6 @@ static void usb_apple_magic_kbd_handle_reset(USBDevice *dev)
     s->boot_modifiers = 0;
     memset(s->boot_keys, 0, sizeof(s->boot_keys));
     s->boot_changed = false;
-    s->heartbeat_pending = false;
 }
 
 static void usb_apple_magic_kbd_handle_control(USBDevice *dev, USBPacket *p,
@@ -1606,33 +1565,15 @@ static void usb_apple_magic_kbd_handle_data(USBDevice *dev, USBPacket *p)
     }
 
     switch (p->ep->nr) {
-    case AMK_EP_VENDOR_IN: {
+    case AMK_EP_VENDOR_IN:
         /*
          * Vendor IN endpoint carries the 1 Hz 0x90 heartbeat queued
          * from the heartbeat timer. NAK when nothing is pending so
          * the host keeps polling without erroring; the typing pipe
          * is on Interface 1's boot-keyboard endpoint.
-         *
-         * Heartbeat layout (3 bytes, matches the 0x90 application in
-         * the vendor HID Report Descriptor):
-         *   byte 0: report ID (0x90)
-         *   byte 1: status bits — bit0 AC mains, bit1 Charging,
-         *           bit2 NeedReplacement, bits3..7 padding.
-         *           0x03 = AC + Charging.
-         *   byte 2: battery percent (0..255), 0x64 = 100%.
          */
-        static const uint8_t heartbeat[3] = { 0x90, 0x03, 0x64 };
-        size_t copy;
-        if (!s->heartbeat_pending) {
-            p->status = USB_RET_NAK;
-            return;
-        }
-        s->heartbeat_pending = false;
-        copy = p->iov.size < sizeof(heartbeat)
-             ? p->iov.size : sizeof(heartbeat);
-        usb_packet_copy(p, (uint8_t *)heartbeat, copy);
+        p->status = USB_RET_NAK;
         return;
-    }
     case AMK_EP_BOOT_IN: {
         uint8_t buf[AMK_BOOT_REPORT_LEN];
         size_t copy;
@@ -1657,11 +1598,6 @@ static void usb_apple_magic_kbd_handle_data(USBDevice *dev, USBPacket *p)
 static void usb_apple_magic_kbd_unrealize(USBDevice *dev)
 {
     USBAppleMagicKbdState *s = USB_APPLE_MAGIC_KBD(dev);
-
-    if (s->heartbeat_timer) {
-        timer_free(s->heartbeat_timer);
-        s->heartbeat_timer = NULL;
-    }
 
     if (s->input_handler) {
         qemu_input_handler_unregister(s->input_handler);

@@ -1162,7 +1162,16 @@ static const USBDescIface desc_iface_apple_magic_kbd[] = {
             {
                 .bEndpointAddress      = USB_DIR_IN | AMK_EP_BOOT_IN,
                 .bmAttributes          = USB_ENDPOINT_XFER_INT,
-                .wMaxPacketSize        = AMK_BOOT_REPORT_LEN,
+                /*
+                 * wMaxPacketSize=64 (full-speed interrupt max) — required
+                 * because the report descriptor declares Report 0x3f as
+                 * a 64-byte vendor input. With a smaller wMaxPacketSize
+                 * the kernel computes MaxInputReportSize > wMaxPacketSize
+                 * and IOHIDInterface.start() blocks waiting for a packet
+                 * size that can't be delivered. We never actually emit
+                 * 64-byte frames — only the 10-byte boot kbd Report 0x01.
+                 */
+                .wMaxPacketSize        = 64,
                 .bInterval             = 8, /* 2 ^ (8-1) * 125 us = 8 ms */
             },
         },

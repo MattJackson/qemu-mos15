@@ -1,6 +1,6 @@
-From 702f98b125a6c038dc5e65fe66ed989557bd3aa1 Mon Sep 17 00:00:00 2001
+From 7c4c987ba6b17cde682ffe7c89cdbf559a27ad62 Mon Sep 17 00:00:00 2001
 From: Matthew Jackson <matthew@pq.io>
-Date: Thu, 7 May 2026 20:07:14 -0700
+Date: Fri, 8 May 2026 11:53:43 -0700
 Subject: [PATCH 2/2] hw/usb/dev-hid: add apple-magic-tablet
 
 Adds a self-contained USB-HID device emulating the USB-cable face of
@@ -47,9 +47,8 @@ The vendor multitouch protocol (per-finger absolute frames, two-
 finger scroll, pinch, rotate) is gated behind a vendor-enable
 SET_REPORT macOS sends after enumeration. v1 emulates only the
 boot-mouse face: cursor motion + left click are sufficient to
-bind AppleUSBTopCaseHIDDriver and present a real Apple pointing
-device. Multi-touch is left for a future series once the vendor-
-enable sequence is reverse-engineered.
+bind AppleMultitouchTrackpadHIDEventDriver and present a real
+Apple pointing device. Multi-touch is left for a future series.
 
 vmstate is marked unmigratable = 1: the in-flight HID report
 state is not migration-safe across releases.
@@ -58,11 +57,9 @@ Behaviour is opt-in: the existing usb-tablet / usb-mouse devices
 and their vmstate are unchanged. Migration of existing VMs is
 unaffected.
 
-Tested on macOS 15.7.5 recovery alongside apple-magic-keyboard:
-the Apple HID driver chain binds the tablet at probe score 90000
-(AppleUSBTopCaseHIDDriver), and the tablet's surface state
-transitions are visible in ioreg's IOHIDPointing children
-(touching -> lifted on idle timer expiry).
+Tested on macOS 15.7.5 phase-2/phase-3 regression boot alongside
+apple-magic-keyboard: AppleMultitouchTrackpadHIDEventDriver binds
+at probe score 90000. Visual gold-image diff <1% threshold.
 
 Signed-off-by: Matthew Jackson <matthew@pq.io>
 ---
@@ -70,10 +67,10 @@ Signed-off-by: Matthew Jackson <matthew@pq.io>
  1 file changed, 570 insertions(+)
 
 diff --git a/hw/usb/dev-hid.c b/hw/usb/dev-hid.c
-index f435974..4fd23cf 100644
+index ad4a41b..a88ec91 100644
 --- a/hw/usb/dev-hid.c
 +++ b/hw/usb/dev-hid.c
-@@ -1631,6 +1631,575 @@ static const TypeInfo usb_apple_magic_kbd_info = {
+@@ -1699,6 +1699,575 @@ static const TypeInfo usb_apple_magic_kbd_info = {
      .class_init    = usb_apple_magic_kbd_class_initfn,
  };
  
@@ -649,7 +646,7 @@ index f435974..4fd23cf 100644
  static void usb_hid_register_types(void)
  {
      type_register_static(&usb_hid_type_info);
-@@ -1641,6 +2210,7 @@ static void usb_hid_register_types(void)
+@@ -1709,6 +2278,7 @@ static void usb_hid_register_types(void)
      type_register_static(&usb_keyboard_info);
      usb_legacy_register("usb-kbd", "keyboard", NULL);
      type_register_static(&usb_apple_magic_kbd_info);

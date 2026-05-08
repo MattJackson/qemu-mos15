@@ -1,6 +1,6 @@
-From 5a4ad24f97153e1750417c0654ec73c1f71f3c1d Mon Sep 17 00:00:00 2001
+From 67533ecaf1be42e8231c1bf2d95b4374e64b530e Mon Sep 17 00:00:00 2001
 From: Matthew Jackson <matthew@pq.io>
-Date: Thu, 7 May 2026 20:06:43 -0700
+Date: Fri, 8 May 2026 11:53:08 -0700
 Subject: [PATCH 1/2] hw/usb/dev-hid: add apple-magic-keyboard
 
 Adds a self-contained USB-HID device emulating the USB-cable face of
@@ -15,35 +15,46 @@ Assistant on first boot, which costs 3-5 minutes on interactive
 installs and effectively hangs headless (VNC / SPICE) installs.
 During recovery / install, the Apple HID stack
 (AppleUSBTopCaseHIDDriver, AppleDeviceManagementHIDEventService,
-AppleUserHIDEventDriver) probes for vendor-specific match
+AppleHIDKeyboardEventDriverV2) probes for Apple-VID match
 dictionaries before falling back to the generic IOUSBHostHIDDevice
-path. Several recovery-only UI panels behave correctly only when
-the chain matches an Apple-VID peripheral.
+path. Recovery-only UI panels behave correctly only when the chain
+matches an Apple-VID peripheral.
 
 The device is a composite USB device with two HID interfaces:
 
   Interface 0 - Apple-vendor HID (UsagePage 0xff00). Carries three
     vendor input report IDs (0xe0 keyboard event, 0x9a modifier
     signal, 0x90 power/battery status) and is what the Apple HID
-    driver chain probes against. ACKs feature-report and
-    GET_REPORT polls so the driver's match phase doesn't enter a
-    retry storm. Emits a 1 Hz 0x90 battery heartbeat (charging on
-    AC, 100%) so the userspace HID watchdog considers the device
-    alive.
+    driver chain probes against. Returns the declared report sizes
+    on GET_REPORT for known IDs (0xe0=4, 0x9a=1, 0x90=2 bytes) and
+    STALLs unknown IDs - matching real-device USB HID behaviour.
 
-  Interface 1 - standard HID Boot Keyboard (UsagePage 0x07,
-    bInterfaceSubClass 1, bInterfaceProtocol 1). Emits the
-    standard 10-byte boot-keyboard input report (modifier byte +
-    7 keycode slots) on EP2 IN. Wired to QEMU's input subsystem
-    via qemu_input_handler_register; any RFB / SPICE / SDL / HMP
-    sendkey source drives it. The QKeyCode -> HID Usage Code
-    mapping covers ANSI letters / digits / function row /
-    editing block / keypad / modifiers.
+  Interface 1 - 'Keyboard / Boot' HID (Apple Magic Keyboard's
+    elaborate boot-keyboard descriptor, 182 bytes, byte-for-byte the
+    real device's descriptor). Four application collections:
+      Report 0x01 - boot keyboard (mod + reserved + 6 keycodes) +
+                    Consumer Eject + Vendor 0xff00 Usage 0x03
+      Report 0x52 - consumer multimedia (play/pause, fast-forward,
+                    rewind, scan-next/prev)
+      Report 0x09 - system control feature (vendor 0xff01)
+      Report 0x3f - vendor 0xff00 64-byte feature blob
 
-bcdUSB = 0x0200 is advertised but the configuration is duplicated
+    Wired to QEMU's input subsystem via qemu_input_handler_register;
+    any RFB / SPICE / SDL / HMP sendkey source drives the boot
+    keyboard report. QKeyCode -> HID Usage Code mapping covers ANSI
+    letters / digits / function row / editing block / keypad /
+    modifiers. The other three application collections are declared
+    in the descriptor for AppleHIDKeyboardEventDriverV2's match
+    dictionary but the emulator only generates Report 0x01 frames.
+
+bcdUSB = 0x0200 advertised but the configuration is duplicated
 across .full and .high USBDesc speed slots: without .full, QEMU's
 USB stack crashes at enumeration on full-speed (12 Mb/s) busses,
 which is the speed the real device negotiates.
+
+Boot interface endpoint advertises wMaxPacketSize=64 (full-speed
+interrupt max), required because the report descriptor declares
+Report 0x3f as a 64-byte vendor input frame.
 
 vmstate is marked unmigratable = 1 (matching dev-wacom.c pattern):
 the in-flight HID report state is not migration-safe across
@@ -52,30 +63,29 @@ releases.
 idVendor 0x05ac and the real PID match the precedent set by
 existing Apple-aware QEMU devices (isa-applesmc ships the verbatim
 Apple OSK string; mac99 emulates real Apple PowerPC hardware;
-apple-gfx.m emulates the host-Apple paravirtualised GPU). These
-devices exist for the macOS-guest fidelity use case; without them,
-macOS guests under QEMU/KVM exhibit a long tail of degraded
-behaviours (Setup Assistant wizards, retry storms, "no recognised
-device" UI). The Apple PnP IDs are public identifiers (linux-usb's
-usb.ids database); emulating them does not bypass any Apple
-licensing check beyond what isa-applesmc already requires.
+apple-gfx.m emulates the host-Apple paravirtualised GPU). The Apple
+PnP IDs are public identifiers (linux-usb's usb.ids database);
+emulating them does not bypass any Apple licensing check beyond
+what isa-applesmc already requires.
 
 Behaviour is opt-in: the existing usb-kbd device and its vmstate
 are unchanged. Migration of existing VMs is unaffected.
 
-Tested on macOS 15.7.5 recovery (qemu-system-x86_64 + qemu-xhci +
-isa-applesmc): AppleUSBTopCaseHIDDriver binds at probe score 90000;
-full Apple HID driver chain starts; Setup Assistant does not
-appear. Visible keystroke proof captured via QMP send-key advancing
-the recovery language-picker UI (compare -metric AE > 0).
+Tested on macOS 15.7.5 phase-2/phase-3 regression boot
+(qemu-system-x86_64 + qemu-xhci + isa-applesmc):
+AppleUSBTopCaseHIDDriver binds at probe score 90000 on both HID
+interfaces; AppleDeviceManagementHIDEventService binds the vendor
+interface; AppleHIDKeyboardEventDriverV2 binds the boot interface.
+IOHIDInterface settles to busy=0 on both. Setup Assistant does not
+appear. Login window paints; visual gold-image diff <1% threshold.
 
 Signed-off-by: Matthew Jackson <matthew@pq.io>
 ---
- hw/usb/dev-hid.c | 770 +++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 770 insertions(+)
+ hw/usb/dev-hid.c | 838 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 838 insertions(+)
 
 diff --git a/hw/usb/dev-hid.c b/hw/usb/dev-hid.c
-index 96623aa..f435974 100644
+index 96623aa..ad4a41b 100644
 --- a/hw/usb/dev-hid.c
 +++ b/hw/usb/dev-hid.c
 @@ -25,6 +25,7 @@
@@ -86,7 +96,7 @@ index 96623aa..f435974 100644
  #include "hw/usb.h"
  #include "migration/vmstate.h"
  #include "desc.h"
-@@ -862,6 +863,774 @@ static const TypeInfo usb_keyboard_info = {
+@@ -862,6 +863,842 @@ static const TypeInfo usb_keyboard_info = {
      .class_init    = usb_keyboard_class_initfn,
  };
  
@@ -146,8 +156,24 @@ index 96623aa..f435974 100644
 + *   bytes 3..9 — up to 7 simultaneous HID Usage codes, 0 in unused slots
 + */
 +#define AMK_BOOT_REPORT_ID    0x01
++/*
++ * Boot keyboard input report (10 bytes total — byte-for-byte the
++ * Apple Magic Keyboard format captured 2026-05-08):
++ *   byte 0: report ID (0x01)
++ *   byte 1: modifier byte (8 bits, HID Usages 0xE0..0xE7)
++ *   byte 2: reserved (always 0)
++ *   bytes 3..8: 6 keycode slots (HID Usage codes, 0 in unused slots)
++ *   byte 9: bit0 = Eject (Consumer Page), bits1..7 = vendor 0xff00
++ *           Usage 0x03 (always 0 for our emulator).
++ *
++ * NOTE: real Apple boot keyboard convention is 6 keycode slots, not
++ * the 7 some older docs describe. Apple's `AppleHIDKeyboardEventDriverV2`
++ * match dictionary depends on this exact layout — using 7 slots makes
++ * the driver decline to bind, which leaves the boot interface's
++ * IOHIDInterface unclaimed and 60s busy-times out on installed macOS.
++ */
 +#define AMK_BOOT_REPORT_LEN   10
-+#define AMK_BOOT_NUM_KEYS     7
++#define AMK_BOOT_NUM_KEYS     6
 +
 +typedef struct USBAppleMagicKbdState {
 +    USBDevice                  dev;
@@ -175,7 +201,7 @@ index 96623aa..f435974 100644
 +    [STR_AMK_PRODUCT]        = "Magic Keyboard with Numeric Keypad",
 +    [STR_AMK_SERIAL]         = "F0T924300PCJKNCAS",
 +    [STR_AMK_INTERFACE]      = "Device Management",
-+    [STR_AMK_INTERFACE_BOOT] = "Boot Keyboard",
++    [STR_AMK_INTERFACE_BOOT] = "Keyboard / Boot",
 +};
 +
 +/*
@@ -252,44 +278,63 @@ index 96623aa..f435974 100644
 + * Real Magic Keyboards expose a similar boot-keyboard interface
 + * alongside the vendor (UsagePage 0xff00) interface.
 + */
++/*
++ * Boot keyboard report descriptor — byte-for-byte the real Apple
++ * Magic Keyboard with Numeric Keypad report descriptor on Interface 1
++ * (IOReg "Keyboard / Boot@1"), captured 2026-05-08 from a real
++ * keyboard plugged into a Mac running macOS 15.x. Source:
++ * paravirt-re/library/apple-magic-hid/captures/usb-magic/
++ * 04-ioreg-usbhostdevice.txt.
++ *
++ * The descriptor declares FOUR application collections:
++ *   App 1, Report 0x01 — boot keyboard (mod+reserved+6 keys),
++ *                         Consumer eject (1 bit), Vendor 0xff00 (7 bits)
++ *   App 2, Report 0x52 — consumer multimedia keys (mute, vol, etc.)
++ *   App 3, Report 0x09 — generic desktop control (system on/off etc.)
++ *   App 4, Report 0x3f — vendor 0xff00 64-byte feature report
++ *
++ * Our emulator only generates Report 0x01 (typing). The other three
++ * collections must be DECLARED in the descriptor for AppleUSBTopCase
++ * HIDDriver and AppleHIDKeyboardEventDriverV2 to match-dictionary
++ * accept the device — we don't have to actually emit reports for
++ * them.
++ *
++ * Using a generic single-collection boot keyboard descriptor (which
++ * we did pre-2026-05-08) makes AppleHIDKeyboardEventDriverV2 decline
++ * to bind, which leaves the boot iface IOHIDInterface unclaimed and
++ * 60s busy-times out on installed macOS.
++ */
 +static const uint8_t apple_magic_kbd_boot_hid_report_descriptor[] = {
-+    0x05, 0x07,             /* Usage Page (Keyboard/Keypad) */
-+    0x09, 0x06,             /* Usage (Keyboard) */
-+    0xa1, 0x01,             /* Collection (Application) */
-+    0x85, AMK_BOOT_REPORT_ID, /*   Report ID (1) */
-+    /* 8 modifier bits (0xE0..0xE7) */
-+    0x05, 0x07,             /*   Usage Page (Keyboard/Keypad) */
-+    0x19, 0xe0,             /*   Usage Minimum (224) */
-+    0x29, 0xe7,             /*   Usage Maximum (231) */
-+    0x15, 0x00,             /*   Logical Minimum (0) */
-+    0x25, 0x01,             /*   Logical Maximum (1) */
-+    0x75, 0x01,             /*   Report Size (1) */
-+    0x95, 0x08,             /*   Report Count (8) */
-+    0x81, 0x02,             /*   Input (Data, Variable, Absolute) */
-+    /* reserved byte */
-+    0x95, 0x01,             /*   Report Count (1) */
-+    0x75, 0x08,             /*   Report Size (8) */
-+    0x81, 0x01,             /*   Input (Constant) */
-+    /* 5 LED output bits + 3 padding */
-+    0x95, 0x05,             /*   Report Count (5) */
-+    0x75, 0x01,             /*   Report Size (1) */
-+    0x05, 0x08,             /*   Usage Page (LEDs) */
-+    0x19, 0x01,             /*   Usage Minimum (1) */
-+    0x29, 0x05,             /*   Usage Maximum (5) */
-+    0x91, 0x02,             /*   Output (Data, Variable, Absolute) */
-+    0x95, 0x01,             /*   Report Count (1) */
-+    0x75, 0x03,             /*   Report Size (3) */
-+    0x91, 0x01,             /*   Output (Constant) */
-+    /* 7 keycode slots (8 bits each) */
-+    0x95, AMK_BOOT_NUM_KEYS, /*   Report Count (7) */
-+    0x75, 0x08,             /*   Report Size (8) */
-+    0x15, 0x00,             /*   Logical Minimum (0) */
-+    0x26, 0xff, 0x00,       /*   Logical Maximum (255) */
-+    0x05, 0x07,             /*   Usage Page (Keyboard/Keypad) */
-+    0x19, 0x00,             /*   Usage Minimum (0) */
-+    0x29, 0xff,             /*   Usage Maximum (255) */
-+    0x81, 0x00,             /*   Input (Data, Array) */
-+    0xc0,                   /* End Collection */
++    /* App 1: boot keyboard + Consumer eject + Vendor 0xff (Report 0x01) */
++    0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x01,
++    0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00,
++    0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
++    0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x05,
++    0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05,
++    0x91, 0x02, 0x95, 0x01, 0x75, 0x03, 0x91, 0x01,
++    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x26, 0xff,
++    0x00, 0x05, 0x07, 0x19, 0x00, 0x29, 0xff, 0x81,
++    0x00, 0x05, 0x0c, 0x75, 0x01, 0x95, 0x01, 0x09,
++    0xb8, 0x15, 0x00, 0x25, 0x01, 0x81, 0x02, 0x05,
++    0xff, 0x09, 0x03, 0x75, 0x07, 0x95, 0x01, 0x81,
++    0x02, 0xc0,
++    /* App 2: Consumer multimedia keys (Report 0x52) +
++     *        system control feature report (Report 0x09)
++     * One Application Collection containing two Report IDs. */
++    0x05, 0x0c, 0x09, 0x01, 0xa1, 0x01,
++    0x85, 0x52, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
++    0x95, 0x01, 0x09, 0xcd, 0x81, 0x02, 0x09, 0xb3,
++    0x81, 0x02, 0x09, 0xb4, 0x81, 0x02, 0x09, 0xb5,
++    0x81, 0x02, 0x09, 0xb6, 0x81, 0x02, 0x81, 0x01,
++    0x81, 0x01, 0x81, 0x01, 0x85, 0x09, 0x15, 0x00,
++    0x25, 0x01, 0x75, 0x08, 0x95, 0x01, 0x06, 0x01,
++    0xff, 0x09, 0x0b, 0xb1, 0x02, 0x75, 0x08, 0x95,
++    0x02, 0xb1, 0x01, 0xc0,
++    /* App 3: Vendor 0xff00 64-byte feature blob (Report 0x3f) */
++    0x06, 0x00, 0xff, 0x09,
++    0x06, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x06,
++    0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95,
++    0x40, 0x85, 0x3f, 0x81, 0x22, 0xc0,
 +};
 +
 +static const USBDescIface desc_iface_apple_magic_kbd[] = {
@@ -354,7 +399,16 @@ index 96623aa..f435974 100644
 +            {
 +                .bEndpointAddress      = USB_DIR_IN | AMK_EP_BOOT_IN,
 +                .bmAttributes          = USB_ENDPOINT_XFER_INT,
-+                .wMaxPacketSize        = AMK_BOOT_REPORT_LEN,
++                /*
++                 * wMaxPacketSize=64 (full-speed interrupt max) — required
++                 * because the report descriptor declares Report 0x3f as
++                 * a 64-byte vendor input. With a smaller wMaxPacketSize
++                 * the kernel computes MaxInputReportSize > wMaxPacketSize
++                 * and IOHIDInterface.start() blocks waiting for a packet
++                 * size that can't be delivered. We never actually emit
++                 * 64-byte frames — only the 10-byte boot kbd Report 0x01.
++                 */
++                .wMaxPacketSize        = 64,
 +                .bInterval             = 8, /* 2 ^ (8-1) * 125 us = 8 ms */
 +            },
 +        },
@@ -523,11 +577,15 @@ index 96623aa..f435974 100644
 +};
 +
 +/*
-+ * Pack the live boot-keyboard state into a 10-byte report payload.
++ * Pack the live boot-keyboard state into a 10-byte report payload —
++ * matches real Apple Magic Keyboard Report 0x01 layout (boot keyboard
++ * + Consumer Eject + Vendor 0xff Usage 0x03):
 + *   buf[0]    = report ID (0x01)
-+ *   buf[1]    = modifier byte
++ *   buf[1]    = modifier byte (HID Usages 0xE0..0xE7)
 + *   buf[2]    = reserved (0)
-+ *   buf[3..9] = 7 keycode slots
++ *   buf[3..8] = 6 keycode slots (HID Usage codes)
++ *   buf[9]    = bit0 Consumer Eject + bits1..7 Vendor 0xff Usage 0x03
++ *              (always 0 — emulator does not generate eject or vendor)
 + */
 +static void apple_magic_kbd_pack_boot_report(USBAppleMagicKbdState *s,
 +                                             uint8_t buf[AMK_BOOT_REPORT_LEN])
@@ -535,7 +593,8 @@ index 96623aa..f435974 100644
 +    buf[0] = AMK_BOOT_REPORT_ID;
 +    buf[1] = s->boot_modifiers;
 +    buf[2] = 0;
-+    memcpy(&buf[3], s->boot_keys, AMK_BOOT_NUM_KEYS);
++    memcpy(&buf[3], s->boot_keys, AMK_BOOT_NUM_KEYS); /* 6 keycodes */
++    buf[9] = 0;                                       /* eject + vendor */
 +}
 +
 +/* Update s->boot_modifiers / s->boot_keys for one HID Usage, then mark
@@ -731,7 +790,7 @@ index 96623aa..f435974 100644
 +         */
 +        uint8_t report_id = value & 0xff;
 +        uint8_t report_type = (value >> 8) & 0xff;
-+        uint16_t reply_len;
++        uint16_t reply_len = 0;
 +
 +        if (index == 1) {
 +            uint8_t buf[AMK_BOOT_REPORT_LEN];
@@ -746,18 +805,29 @@ index 96623aa..f435974 100644
 +                p->actual_length = reply_len;
 +                return;
 +            }
-+            /* Other report types/IDs on the boot iface — ack with zeros. */
-+            reply_len = (length > 0 && length <= 64) ? length : 1;
-+            memset(data, 0, reply_len);
-+            p->actual_length = reply_len;
-+            return;
++            /*
++             * Unknown report type/ID on the boot iface — STALL.
++             * macOS speculatively probes Feature reads for IDs not in the
++             * descriptor (e.g. 0x02, 0x03); a real device responds with
++             * a STALL there and macOS moves on. Returning zero-fill
++             * causes the host's HID parser to treat the response as a
++             * valid-but-malformed report and stall the IOHIDInterface
++             * during ::start (the (a,4020001) busy timeout).
++             */
++            break;
 +        }
 +
++        /* Vendor iface: same logic — only declared report IDs answer. */
 +        switch (report_id) {
 +        case 0xe0: reply_len = 4; break;
 +        case 0x9a: reply_len = 1; break;
 +        case 0x90: reply_len = 2; break;
-+        default:   reply_len = (length > 0 && length <= 64) ? length : 1;
++        default:
++            /* Unknown vendor report ID — STALL (real device behaviour). */
++            break;
++        }
++        if (reply_len == 0) {
++            break;  /* falls through to STALL */
 +        }
 +        if (reply_len > length) {
 +            reply_len = length;
@@ -775,7 +845,15 @@ index 96623aa..f435974 100644
 +         *
 +         * Interface 1 (boot keyboard): ACK SET_REPORT (LED state).
 +         * We don't drive any host-visible LEDs yet but must not stall.
++         *
++         * MUST set actual_length: the USB layer reports back the
++         * number of bytes accepted, which the host uses to confirm
++         * the write succeeded. Without it the host reads "0 bytes
++         * accepted" and retries. Trace 2026-05-08 showed macOS
++         * sending the same LED SET_REPORT 5 times back-to-back —
++         * exactly that retry pattern.
 +         */
++        p->actual_length = length;
 +        return;
 +    }
 +
@@ -861,7 +939,7 @@ index 96623aa..f435974 100644
  static void usb_hid_register_types(void)
  {
      type_register_static(&usb_hid_type_info);
-@@ -871,6 +1640,7 @@ static void usb_hid_register_types(void)
+@@ -871,6 +1708,7 @@ static void usb_hid_register_types(void)
      usb_legacy_register("usb-mouse", "mouse", NULL);
      type_register_static(&usb_keyboard_info);
      usb_legacy_register("usb-kbd", "keyboard", NULL);

@@ -1,6 +1,6 @@
-From 702f98b125a6c038dc5e65fe66ed989557bd3aa1 Mon Sep 17 00:00:00 2001
+From 7c4c987ba6b17cde682ffe7c89cdbf559a27ad62 Mon Sep 17 00:00:00 2001
 From: Matthew Jackson <matthew@pq.io>
-Date: Thu, 7 May 2026 20:07:24 -0700
+Date: Fri, 8 May 2026 11:56:44 -0700
 Subject: [PATCH 0/2] hw/usb/dev-hid: Apple Magic Keyboard and Magic Trackpad
  emulators
 
@@ -20,14 +20,18 @@ peripheral. With usb-kbd / usb-tablet, macOS guests:
     (VNC / SPICE) installs.
   * Bind the generic IOUSBHostHIDDevice driver instead of the
     Apple HID driver chain (AppleUSBTopCaseHIDDriver,
-    AppleDeviceManagementHIDEventService, AppleUserHIDEventDriver).
-    Several recovery / install / multi-touch UI panels behave
-    correctly only when the chain matches an Apple-VID peripheral.
+    AppleDeviceManagementHIDEventService,
+    AppleHIDKeyboardEventDriverV2,
+    AppleMultitouchTrackpadHIDEventDriver). Several recovery /
+    install / multi-touch UI panels behave correctly only when
+    the chain matches an Apple-VID peripheral.
 
 The new devices ship the real wire format (descriptors, HID report
-descriptors, endpoint topology, vendor heartbeat) byte-identical to
-real hardware in USB-cable mode, so the Apple HID driver chain
-binds at probe score 90000 and macOS treats them as native.
+descriptors, endpoint topology) byte-identical to real hardware in
+USB-cable mode. The keyboard's boot-interface report descriptor is
+byte-for-byte the real Apple Magic Keyboard with Numeric Keypad
+descriptor (182 bytes, four application collections), captured from
+a real keyboard plugged into a Mac via the macOS IOReg dump.
 
 Self-contained, additive only
 -----------------------------
@@ -59,14 +63,24 @@ Tested
   * Linux-guest descriptor walk (xHCI + libusb) - descriptors and
     HID report descriptors decode cleanly. PID/VID/strings as
     expected.
-  * macOS 15.7.5 recovery boot - AppleUSBTopCaseHIDDriver binds
-    at probe score 90000; full Apple HID driver chain
-    (AppleDeviceManagementHIDEventService, AppleUserHIDEventDriver)
-    starts. Setup Assistant does not appear.
+
+  * macOS 15.7.5 phase-2 + phase-3 regression boot - both PASS:
+      - phase 2 (patched QEMU + macOS HD + isa-applesmc + ICH9):
+        boot=106s, visual gold-image diff 0.87% / 2% threshold
+      - phase 3 (+ apple-magic-keyboard + apple-magic-tablet):
+        boot=77s,  visual gold-image diff 0.83% / 2% threshold
+    Apple HID driver chain binds at probe score 90000:
+      AppleUSBTopCaseHIDDriver on both keyboard interfaces +
+      AppleDeviceManagementHIDEventService on the vendor interface +
+      AppleHIDKeyboardEventDriverV2 on the boot interface +
+      AppleMultitouchTrackpadHIDEventDriver on the tablet
+    IOHIDInterface settles to busy=0 on every interface.
+
   * Visible keystroke proof - QMP send-key ret advances macOS
     recovery's language-picker UI; compare -metric AE
     before.png after.png null: returns a positive pixel-diff
     metric (typical: >100k pixels changed).
+
   * Regression: -device usb-kbd / -device usb-tablet continue to
     behave identically to current QEMU.
 
@@ -74,13 +88,19 @@ Patches
 -------
 
   0001 - apple-magic-keyboard: composite device, two HID interfaces.
-    Interface 0 (vendor UsagePage 0xff00) carries the three vendor
-    input report IDs (0xe0 / 0x9a / 0x90) the Apple driver chain
-    probes against, plus the 1 Hz battery heartbeat. Interface 1 is
-    a standard HID Boot Keyboard (10-byte input report,
-    qemu_input_handler_register-driven). QKeyCode -> HID Usage Code
-    mapping covers ANSI letters / digits / function row / editing
-    block / keypad / modifiers.
+    Interface 0 (vendor UsagePage 0xff00) carries vendor input
+    report IDs 0xe0 / 0x9a / 0x90 the Apple driver chain probes
+    against. Interface 1 carries the Magic Keyboard boot-keyboard
+    descriptor (182 bytes, byte-for-byte real device, four
+    application collections - boot kbd Report 0x01 + Consumer
+    Eject + Vendor 0xff Usage 0x03; consumer multimedia Report
+    0x52; system control feature Report 0x09; vendor Report 0x3f
+    64-byte feature blob). Wired to qemu_input_handler_register-
+    driven keystroke path. STALLs on GET_REPORT for undeclared
+    report IDs (matches real-device USB HID behaviour - returning
+    zero-fill there causes macOS's HID parser to wedge during
+    IOHIDInterface::start). SET_REPORT sets actual_length so the
+    host doesn't retry indefinitely.
 
   0002 - apple-magic-tablet: single HID interface, two input
     reports. RID 0x01 is the 1 Hz heartbeat (3 bytes, 01 00 00);
@@ -113,8 +133,8 @@ Matthew Jackson (2):
   hw/usb/dev-hid: add apple-magic-keyboard
   hw/usb/dev-hid: add apple-magic-tablet
 
- hw/usb/dev-hid.c | 1340 ++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 1340 insertions(+)
+ hw/usb/dev-hid.c | 1408 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 1408 insertions(+)
 
 --
 2.50.1 (Apple Git-155)

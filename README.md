@@ -1,6 +1,6 @@
 # mos-qemu
 
-QEMU 10.2.2 patches for running unmodified macOS 15 (Sequoia) as a
+QEMU 11.0.0 patches for running unmodified macOS 15 (Sequoia) as a
 guest on Linux + KVM. Three overlay files plus one new device that
 implements the host side of Apple's **ParavirtualizedGraphics**
 protocol on Linux — the missing piece that lets `apple-gfx-pci`
@@ -20,7 +20,7 @@ This README covers what `mos-qemu` ships and how to build it.
 
 ## Patch surface
 
-Four files vs upstream QEMU 10.2.2 — three overlays and one new device:
+Four files vs upstream QEMU 11.0.0 — three overlays and one new device:
 
 | File | What it adds | Whitepaper / reference |
 |---|---|---|
@@ -44,7 +44,7 @@ There are three modes:
 ### (a) Consumed by mos-docker (recommended)
 
 You don't build by hand — [mos-docker](https://github.com/MattJackson/mos-docker)'s
-Dockerfile fetches upstream QEMU 10.2.2, overlays this repo's files,
+Dockerfile fetches upstream QEMU 11.0.0, overlays this repo's files,
 and builds in a single Alpine 3.21 stage. Two commands from a fresh
 Linux host get you a running macOS guest. Start at the
 [mos-docker README](https://github.com/MattJackson/mos-docker).
@@ -57,8 +57,8 @@ runtime libc:
 
 ```bash
 # 1. Fetch upstream QEMU
-curl -sL https://download.qemu.org/qemu-10.2.2.tar.xz | tar xJ -C /tmp
-cd /tmp/qemu-10.2.2
+curl -sL https://download.qemu.org/qemu-11.0.0.tar.xz | tar xJ -C /tmp
+cd /tmp/qemu-11.0.0
 
 # 2. Overlay this repo's files
 git clone https://github.com/MattJackson/mos-qemu /tmp/mos-qemu
@@ -75,7 +75,7 @@ cp /tmp/mos-qemu/pc-bios/meson.build                 pc-bios/
 cp /tmp/mos-qemu/pc-bios/apple-gfx-pci.rom           pc-bios/
 
 # 3. Build in Alpine 3.21 (matches the runtime container's musl libc)
-docker run --rm -v /tmp/qemu-10.2.2:/src -v /tmp:/out alpine:3.21 sh -c '
+docker run --rm -v /tmp/qemu-11.0.0:/src -v /tmp:/out alpine:3.21 sh -c '
   apk add --no-cache build-base python3 ninja meson pkgconf bash curl \
       glib-dev pixman-dev libcap-ng-dev libseccomp-dev \
       libslirp-dev libaio-dev dtc-dev
@@ -143,14 +143,14 @@ letter, testing recipe, and PR description. Current state:
   [`upstream-pr/apple-gfx-pci-linux/LIBAPPLEGFX_DEPENDENCY.md`](upstream-pr/apple-gfx-pci-linux/LIBAPPLEGFX_DEPENDENCY.md))
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) gates on:
-overlay files compile against pristine upstream 10.2.2; every
+overlay files compile against pristine upstream 11.0.0; every
 `upstream-pr/*/` series applies cleanly with `git am`; no fork-local
 identifiers (`mos15`, `mos-qemu`, etc.) leak into upstream-destined
 code or patch bodies; no QEMU-10-removed API patterns.
 
 ## Pin and rebase strategy
 
-This fork pins **upstream QEMU 10.2.2**. The same version is pinned
+This fork pins **upstream QEMU 11.0.0**. The same version is pinned
 by `mos-docker`'s Dockerfile (`ARG QEMU_VERSION`) and the CI
 workflow's `env.QEMU_VERSION`; bump all three in lockstep.
 

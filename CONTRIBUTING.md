@@ -18,7 +18,7 @@ File issues on GitHub: https://github.com/MattJackson/mos-qemu/issues
 Please include:
 
 - Affected version (`git rev-parse HEAD` of this repo, plus upstream
-  QEMU version — usually 10.2.2).
+  QEMU version — usually 11.0.0).
 - Whether you're hitting the bug via [mos-docker](https://github.com/MattJackson/mos-docker)
   (the integrated runtime) or in a standalone build.
 - Reproduction steps. Serial-log excerpts (`data/logs/serial-*.log`
@@ -80,7 +80,7 @@ Each package carries:
 - `TESTING.md` — validation recipe
 
 CI (`upstream-pr-apply` job) runs `git am --check` on every series
-against an unmodified upstream QEMU 10.2.2 tarball; a series that no
+against an unmodified upstream QEMU 11.0.0 tarball; a series that no
 longer applies cleanly fails the gate.
 
 ## Testing

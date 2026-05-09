@@ -1,6 +1,6 @@
 # mos-qemu — agent context
 
-QEMU 10.2.2 fork. Three overlay files (`hw/misc/applesmc.c`,
+QEMU 11.0.0 fork. Three overlay files (`hw/misc/applesmc.c`,
 `hw/display/vmware_vga.c`, `hw/usb/dev-hid.c`) and one new device
 (`hw/display/apple-gfx-pci-linux.c` + `apple-gfx-common-linux.c` +
 `apple-gfx-linux.h`). All four are PR-ready for `qemu-project/qemu`

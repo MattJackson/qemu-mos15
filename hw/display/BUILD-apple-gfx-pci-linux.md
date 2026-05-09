@@ -6,7 +6,7 @@ This document specifies how the Linux port of the Apple ParavirtualizedGraphics 
 
 ## Files in mos-qemu
 
-The following files in `/Users/mjackson/Developer/qemu-mos15/` are overlay/replacement files for QEMU 10.2.2:
+The following files in `/Users/mjackson/Developer/qemu-mos15/` are overlay/replacement files for QEMU 11.0.0:
 
 - `hw/display/apple-gfx-pci-linux.c` — Main device implementation
 - `hw/display/apple-gfx-common-linux.c` — Shared utilities
@@ -22,7 +22,7 @@ The following files in `/Users/mjackson/Developer/qemu-mos15/` are overlay/repla
 
 ## Build-time copy pattern
 
-The `docker-macos/Dockerfile` downloads full QEMU 10.2.2 upstream, then overlays our changes via `cp` commands. The new copy block must be:
+The `docker-macos/Dockerfile` downloads full QEMU 11.0.0 upstream, then overlays our changes via `cp` commands. The new copy block must be:
 
 ```dockerfile
 cd /tmp/qemu-${QEMU_VERSION} && \
@@ -139,14 +139,14 @@ After configure, check that the device is recognized:
 
 ```bash
 # In container during build
-cd /tmp/qemu-10.2.2/build && \
+cd /tmp/qemu-11.0.0/build && \
 meson introspect --targets | grep apple_gfx_pci_linux
 ```
 
 Or check the config output:
 
 ```bash
-cd /tmp/qemu-10.2.2/build && \
+cd /tmp/qemu-11.0.0/build && \
 grep -i apple_gfx_pci_linux meson-logs/meson-log.txt
 ```
 

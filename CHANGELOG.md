@@ -14,6 +14,15 @@ upstream base.
 
 _Nothing yet._
 
+## [0.6.0] — 2026-05-XX
+
+### Changed
+- Rebased onto QEMU 11.0.0. Build infrastructure (Dockerfile `ARG
+  QEMU_VERSION`, `ADD https://download.qemu.org/qemu-*.tar.xz` URL),
+  documentation, and standalone-build recipe updated in lockstep.
+  Patch surface unchanged (same three overlays + `apple-gfx-pci-linux`
+  device); the rebase is mechanical against the new upstream base.
+
 ## [0.5.0] — 2026-04
 
 First usable cut. Verified end-to-end on macOS 15.7.5 as a KVM guest on
@@ -64,5 +73,6 @@ Linux, built against QEMU 10.2.2.
   upstream GPL-2.0-or-later licensing. The combined work satisfies both
   (AGPL-3.0 implies GPL-3.0, which is compatible with GPL-2.0-or-later).
 
-[Unreleased]: https://github.com/MattJackson/mos-qemu/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/MattJackson/mos-qemu/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/MattJackson/mos-qemu/releases/tag/v0.6.0
 [0.5.0]: https://github.com/MattJackson/mos-qemu/releases/tag/v0.5.0

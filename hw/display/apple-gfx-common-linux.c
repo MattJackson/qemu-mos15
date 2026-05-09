@@ -797,10 +797,10 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
     /* 60 Hz vblank tick. Also performs the initial dpy_gfx_update_full —
      * doing it from realize segfaults because VNC/SDL backends aren't
      * wired into the QemuConsole's listener chain until vCPU start. */
-    timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL,
+    timer_init_ns(&s->vblank_timer, QEMU_CLOCK_REALTIME,
                   apple_gfx_vblank_tick, s);
     timer_mod(&s->vblank_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+              qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
               NANOSECONDS_PER_SECOND / 60);
 
     return true;

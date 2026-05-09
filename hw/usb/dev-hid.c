@@ -1946,9 +1946,23 @@ static const USBDesc desc_apple_magic_tablet = {
 /* Maximum queued reports waiting for the host to poll the IN endpoint. */
 #define AMT_QUEUE_DEPTH      16
 
+/* Trackpad 2 absolute coordinate ranges from Linux hid-magicmouse.c
+ * (TRACKPAD2_MIN/MAX_X/Y). 13-bit signed values centred near 0. */
+#define AMT_TRACKPAD_MIN_X   (-3678)
+#define AMT_TRACKPAD_MAX_X   ( 3934)
+#define AMT_TRACKPAD_MIN_Y   (-2478)
+#define AMT_TRACKPAD_MAX_Y   ( 2587)
+
+/* Multitouch Report 0x44: 1 ID byte + 1 button byte + 9 B per-touch record.
+ * We emit a single-finger frame, so 11 bytes total. Real device declares
+ * Report 0x44 as up to 1387 B (15-finger array + framing) but a 11-byte
+ * single-finger payload is a valid subset and what the cursor-motion code
+ * path expects to see. */
+#define AMT_MULTITOUCH_LEN   11
+
 typedef struct USBAppleMagicTabletReport {
-    uint8_t data[8];
-    uint8_t len;     /* 3 for RID 0x01, 8 for RID 0x02 */
+    uint8_t data[64];                /* 8 for boot RID 0x02, 11 for RID 0x44 */
+    uint8_t len;
 } USBAppleMagicTabletReport;
 
 typedef struct USBAppleMagicTabletState {
@@ -1986,6 +2000,16 @@ typedef struct USBAppleMagicTabletState {
      * acknowledged a touch-on frame. We emit one synthetic touch-on
      * frame on the first input event after realize / lift. */
     bool     finger_touching;
+
+    /* Trackpad-coordinate absolute position for multitouch Report 0x44.
+     * REL deltas from QEMU input subsystem are accumulated into these,
+     * clamped to TRACKPAD2 ranges. The real device reports per-finger
+     * absolute positions in its multitouch report; the multitouch driver
+     * in macOS (AppleMultitouchTrackpadHIDEventDriver) drives cursor
+     * motion off these absolute positions, NOT off the boot-mouse
+     * Report 0x02 deltas. */
+    int32_t  trackpad_x;
+    int32_t  trackpad_y;
 } USBAppleMagicTabletState;
 
 #define TYPE_USB_APPLE_MAGIC_TABLET "apple-magic-tablet"
@@ -2075,6 +2099,62 @@ static void amt_emit_pointer_report(USBAppleMagicTabletState *s)
     usb_wakeup(s->intr, 0);
 }
 
+/*
+ * Multitouch Report 0x44 — single-finger frame.
+ *
+ * AppleMultitouchTrackpadHIDEventDriver drives cursor motion off the
+ * per-finger ABSOLUTE positions in this report (NOT off the boot-mouse
+ * Report 0x02 deltas — those go to a separate IOHIDPointing path that
+ * doesn't bind on Magic Trackpad PIDs). Empirically, even with a perfect
+ * boot-mouse Report 0x02 the cursor stays parked; only emitting this
+ * multitouch frame can move it.
+ *
+ * Wire format (per Linux drivers/hid/hid-magicmouse.c, paraphrased in
+ * mos paravirt-re/library/apple-magic-hid/protocol-from-linux.md §6.3):
+ *
+ *   data[0]    report ID (0x44)
+ *   data[1]    button state (bit 0 = left click)
+ *   data[2..10] one 9-byte per-touch record:
+ *     [0..1]   X (13-bit signed in low 13 bits of LE16)
+ *     [2..3]   Y (13-bit signed in low 13 bits of LE16)
+ *     [4]      touch_major
+ *     [5]      touch_minor
+ *     [6]      orientation (signed 4-bit)
+ *     [7]      pressure (0..253)
+ *     [8]      id (low 4 bits) | state (high 4 bits)
+ *
+ * The Linux notes use a more compact bit-packing for X/Y (overlapping
+ * across bytes 0..2 and 2..4) — using the simpler aligned LE16 layout
+ * here as the first attempt; if cursor doesn't move we'll switch to the
+ * overlapping form.
+ */
+static void amt_emit_multitouch_report(USBAppleMagicTabletState *s)
+{
+    uint8_t buf[AMT_MULTITOUCH_LEN];
+    int16_t tx = (int16_t)s->trackpad_x;
+    int16_t ty = (int16_t)s->trackpad_y;
+
+    buf[0] = 0x44;                                    /* report ID */
+    buf[1] = s->button_left ? 0x01 : 0x00;            /* button state */
+    /* Per-touch record (9 bytes): */
+    buf[2] = (uint8_t)(tx & 0xff);                    /* X low byte */
+    buf[3] = (uint8_t)((tx >> 8) & 0x1f);             /* X high 5 bits */
+    buf[4] = (uint8_t)(ty & 0xff);                    /* Y low byte */
+    buf[5] = (uint8_t)((ty >> 8) & 0x1f);             /* Y high 5 bits */
+    buf[6] = 0x10;                                    /* touch_major */
+    buf[7] = 0x10;                                    /* touch_minor */
+    buf[8] = 0x00;                                    /* orientation */
+    buf[9] = 200;                                     /* pressure */
+    buf[10] = 0x10;                                   /* id=0, state=1 (touch) */
+
+    fprintf(stderr,
+            "[AMT-DBG] emit mt x=%d y=%d btn=%d\n",
+            tx, ty, s->button_left);
+
+    amt_enqueue(s, buf, sizeof(buf));
+    usb_wakeup(s->intr, 0);
+}
+
 static void amt_emit_heartbeat(USBAppleMagicTabletState *s)
 {
     static const uint8_t heartbeat[3] = { 0x01, 0x00, 0x00 };
@@ -2105,8 +2185,20 @@ static void amt_input_event(DeviceState *dev, QemuConsole *src,
                 move->axis, (long long)move->value);
         if (move->axis == INPUT_AXIS_X) {
             s->pending_dx += move->value;
+            s->trackpad_x += move->value;
+            if (s->trackpad_x < AMT_TRACKPAD_MIN_X) {
+                s->trackpad_x = AMT_TRACKPAD_MIN_X;
+            } else if (s->trackpad_x > AMT_TRACKPAD_MAX_X) {
+                s->trackpad_x = AMT_TRACKPAD_MAX_X;
+            }
         } else if (move->axis == INPUT_AXIS_Y) {
             s->pending_dy += move->value;
+            s->trackpad_y += move->value;
+            if (s->trackpad_y < AMT_TRACKPAD_MIN_Y) {
+                s->trackpad_y = AMT_TRACKPAD_MIN_Y;
+            } else if (s->trackpad_y > AMT_TRACKPAD_MAX_Y) {
+                s->trackpad_y = AMT_TRACKPAD_MAX_Y;
+            }
         }
         s->pending_event = true;
         break;
@@ -2132,12 +2224,20 @@ static void amt_input_event(DeviceState *dev, QemuConsole *src,
                 s->pending_dx += scaled - s->last_abs_x;
             }
             s->last_abs_x = scaled;
+            /* Map VNC X (0..1919) → trackpad X (-3678..3934) absolute. */
+            s->trackpad_x = AMT_TRACKPAD_MIN_X +
+                (int32_t)(((int64_t)move->value *
+                           (AMT_TRACKPAD_MAX_X - AMT_TRACKPAD_MIN_X)) / 0x7fff);
         } else if (move->axis == INPUT_AXIS_Y) {
             int32_t scaled = (move->value * 1080) / 0x7fff;
             if (s->last_abs_y >= 0) {
                 s->pending_dy += scaled - s->last_abs_y;
             }
             s->last_abs_y = scaled;
+            /* Map VNC Y (0..1079) → trackpad Y (-2478..2587) absolute. */
+            s->trackpad_y = AMT_TRACKPAD_MIN_Y +
+                (int32_t)(((int64_t)move->value *
+                           (AMT_TRACKPAD_MAX_Y - AMT_TRACKPAD_MIN_Y)) / 0x7fff);
         }
         s->pending_event = true;
         break;
@@ -2188,7 +2288,16 @@ static void amt_input_sync(DeviceState *dev)
         s->finger_touching = true;
     }
 
+    /*
+     * Emit BOTH the boot-mouse Report 0x02 (for IOHIDPointing-style
+     * consumers) AND the multitouch Report 0x44 (for
+     * AppleMultitouchTrackpadHIDEventDriver, which is the driver that
+     * actually binds on Magic Trackpad PIDs). Boot mouse alone is
+     * empirically insufficient; multitouch alone might be too if any
+     * upper-layer code reads boot-mouse state. Keep both.
+     */
     amt_emit_pointer_report(s);
+    amt_emit_multitouch_report(s);
 }
 
 static QemuInputHandler amt_input_handler = {
@@ -2221,6 +2330,8 @@ static void usb_apple_magic_tablet_realize(USBDevice *dev, Error **errp)
     s->last_abs_y = -1;
     s->pending_event = false;
     s->finger_touching = false;
+    s->trackpad_x = 0;        /* centred trackpad-coord position */
+    s->trackpad_y = 0;
 
     /*
      * Heartbeat disabled: the boot-mouse Trackpad/Boot interface descriptor

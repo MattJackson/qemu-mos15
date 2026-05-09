@@ -218,7 +218,6 @@ dm163_refresh_rate(uint32_t rr) "refresh rate %d"
 # binary. When re-syncing with upstream, keep this block intact.
 apple_gfx_pci_realize(void) "apple-gfx-pci: device realize"
 apple_gfx_pci_reset(void) "apple-gfx-pci: device reset"
-/* apple_gfx_pci_init deleted — never called from C; unused trace event */
 apple_gfx_create_task(uint64_t vm_size, void *va) "vm_size=0x%" PRIx64 " va=%p"
 apple_gfx_destroy_task(void *task, uint32_t n_regions) "task=%p regions=%u"
 apple_gfx_map_memory(void *task, size_t count, uint64_t virtual_offset, bool ro) "task=%p count=%zu offset=0x%" PRIx64 " ro=%d"

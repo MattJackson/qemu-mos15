@@ -471,7 +471,9 @@ apple_gfx_vblank_tick(void *opaque)
 {
     AppleGFXLinuxState *s = opaque;
 
-    qemu_log_mask(LOG_DEBUG, "apple-gfx: vblank tick fired\n");
+    if (qemu_log_enabled()) {
+        qemu_log("apple-gfx: vblank tick fired\n");
+    }
     trace_apple_gfx_vblank_tick();
 
     /* Tick may have been queued before unrealize completed; lagfx_dev
@@ -803,8 +805,10 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
     uint64_t next_fire = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
                          NANOSECONDS_PER_SECOND / 60;
     timer_mod(&s->vblank_timer, next_fire);
-    qemu_log_mask(LOG_DEBUG, "apple-gfx: vblank timer init next_fire=%lu ns\n",
+    if (qemu_log_enabled()) {
+        qemu_log("apple-gfx: vblank timer init next_fire=%lu ns\n",
                   next_fire);
+    }
 
     return true;
 }

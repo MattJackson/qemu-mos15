@@ -202,16 +202,20 @@ apple_gfx_pci_unrealize(DeviceState *dev)
      /* Drain task queue before freeing device — prevents UAF if tasks
       * reference freed state. lagfx_device_free does NOT drain tasks. */
      AppleGFXLinuxTask *task, *tmp;
-     QTAILQ_FOREACH_SAFE(task, &s->common.tasks, links, tmp) {
-         QTAILQ_REMOVE(&s->common.tasks, task, links);
+     QTAILQ_FOREACH_SAFE(task, &s->common.tasks, node, tmp) {
+         QTAILQ_REMOVE(&s->common.tasks, task, node);
 
-         if (task->mapped_region) {
-             memory_region_unref(task->mapped_region);
+         /* Unref all MemoryRegions in the mapped_regions array. */
+         for (guint i = 0; i < task->mapped_regions->len; ++i) {
+             memory_region_unref(g_ptr_array_index(task->mapped_regions, i));
          }
+         g_ptr_array_free(task->mapped_regions, TRUE);
+
          g_free(task);
      }
 
      /* MSI teardown — paired with msi_init at line 98. */
+     PCIDevice *pci_dev = PCI_DEVICE(dev);
      msi_uninit(pci_dev);
 
      if (s->common.lagfx_disp) {

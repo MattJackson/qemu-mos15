@@ -891,6 +891,14 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
     s->surface = qemu_create_displaysurface(1920, 1080);
     dpy_gfx_replace_surface(s->con, s->surface);
 
+    /* Force an initial update push so noVNC/VNC/SDL backends pick up the black
+     * surface immediately. With gfx_update=NULL and gfx_update_async=true,
+     * the display hub does not poll us — we own the update timing. Without this
+     * call the surface is registered but no backend is told there are pixels to
+     * read, and the noVNC client shows "Guest has not initialized display (yet)"
+     * until libapplegfx pushes its first real frame later. */
+    dpy_gfx_update_full(s->con);
+
     /* VBlank timer: ticks at ~60 Hz to advance the guest's vblank counter.
      * WindowServer waits on this counter before submitting display updates. */
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL,

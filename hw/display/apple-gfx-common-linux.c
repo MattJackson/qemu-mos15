@@ -868,7 +868,28 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
     disp_desc.callbacks.cursor_moved = apple_gfx_cursor_moved;
     disp_desc.callbacks.cursor_show = apple_gfx_cursor_show;
 
-    /* Create display */
+    /* Create QEMU console + initial surface BEFORE lagfx_display_new.
+     * lagfx_display_new synchronously invokes display_rt_create →
+     * notify_mode_changed → apple_gfx_mode_changed (our callback) →
+     * dpy_gfx_replace_surface(s->con, ...). If s->con is NULL or
+     * s->surface unset at that moment, that path segfaults. The
+     * pre-published 1920x1080 surface also lets apple_gfx_mode_changed
+     * early-return when libapplegfx fires the initial mode at the same
+     * dimensions. (Regression entered via libapplegfx-vulkan e0ba3a5,
+     * which moved notify_mode_changed into display_rt_create — before
+     * that commit it only fired on real mode changes after init.) */
+    static const GraphicHwOps apple_gfx_hw_ops = {
+        .gfx_update = NULL,  /* TODO(Phase-1.B): implement */
+        .gfx_update_async = true,
+    };
+
+    s->con = graphic_console_init(dev, 0, &apple_gfx_hw_ops, s);
+
+    s->surface = qemu_create_displaysurface(1920, 1080);
+    dpy_gfx_replace_surface(s->con, s->surface);
+
+    /* Create display — may synchronously call apple_gfx_mode_changed.
+     * Console + surface above must already be set. */
     s->lagfx_disp = lagfx_display_new(s->lagfx_dev, &disp_desc,
                                        0, /* port */
                                        next_pgdisplay_serial_num++,
@@ -880,20 +901,6 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
         g_free(errp_lagfx);
         return false;
     }
-
-    /* Create QEMU console for display */
-    static const GraphicHwOps apple_gfx_hw_ops = {
-        .gfx_update = NULL,  /* TODO(Phase-1.B): implement */
-        .gfx_update_async = true,
-    };
-
-    s->con = graphic_console_init(dev, 0, &apple_gfx_hw_ops, s);
-
-    /* Publish initial black surface immediately so GOP/OpenCore sees a display.
-     * stdvga/vmware_vga create surfaces lazily in their gfx_update callbacks,
-     * but apple-gfx needs to publish one upfront for UEFI GOP visibility. */
-    s->surface = qemu_create_displaysurface(1920, 1080);
-    dpy_gfx_replace_surface(s->con, s->surface);
 
     /* Initial update push happens in the vblank tick (see apple_gfx_vblank_tick),
      * NOT here. Calling dpy_gfx_update_full from realize segfaults: VNC/SDL

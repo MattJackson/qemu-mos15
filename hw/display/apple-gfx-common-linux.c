@@ -448,9 +448,9 @@ apple_gfx_vblank_tick(void *opaque)
  {
      AppleGFXLinuxState *s = opaque;
 
-     /* Cap pending at 2: cmpxchg(0,1) succeeds only when value==0.
+/* Cap pending at 2: cmpxchg(0,1) succeeds only when value==0.
  * If we see >=1, another thread is handling or we're capped. */
-     prev = qatomic_cmpxchg(&s->pending_frames, 0, 1);
+uint32_t prev = qatomic_cmpxchg(&s->pending_frames, 0, 1);
      if (prev != 0 || qatomic_read(&s->pending_frames) > 1) {
          return;
      }
@@ -525,8 +525,8 @@ apple_gfx_cursor_glyph(void *opaque,
     uint32_t *dest_px;
     const uint8_t *src_px;
 
-    /* BPP is always 32 for QEMU cursors — no need to trace dead constant. */
-    trace_apple_gfx_cursor_set(width, height);
+/* BPP is always 32 for QEMU cursors. */
+trace_apple_gfx_cursor_set(32, width, height);
 
     cursor = cursor_alloc(width, height);
     cursor->hot_x = hotspot.x;
@@ -720,14 +720,15 @@ if (!s->lagfx_disp) {
               s->surface = NULL;
           }
 
-          /* Unregister migration blocker — prevents stale blocker on retry. */
-          if (!migrate_add_blocker(apple_gfx_mig_blocker, &mig_err)) {
-              qemu_log_mask(LOG_GUEST_ERROR, "apple-gfx: failed to unblock migrate\n");
-          }
-          g_free(mig_err);
+/* Unregister migration blocker — prevents stale blocker on retry. */
+Error *mig_err_local = NULL;
+if (migrate_del_blocker(apple_gfx_mig_blocker, &mig_err_local) < 0) {
+               qemu_log_mask(LOG_GUEST_ERROR, "apple-gfx: failed to unblock migrate\n");
+           }
+           error_free(mig_err_local);
 
-          /* NULL lagfx_dev to prevent UAF if apple_gfx_pci_reset runs. */
-          s->common.lagfx_dev = NULL;
+           /* NULL lagfx_dev to prevent UAF if apple_gfx_pci_reset runs. */
+           s->lagfx_dev = NULL;
           lagfx_device_free(s->lagfx_dev);
 
           g_free(errp_lagfx);

@@ -117,11 +117,11 @@ apple_gfx_create_task(void *opaque, uint64_t vm_size, void **base_address_out)
     void *base_addr = NULL;
 
     /* Reserve the VA range via libapplegfx-vulkan's memfd-backed helper. */
-    lagfx_task = lagfx_task_create((size_t)vm_size, &base_addr);
+   lagfx_task = lagfx_task_create((size_t)vm_size, &base_addr);
     if (!lagfx_task) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "apple-gfx: lagfx_task_create(vm_size=0x%" PRIx64
-                      ") failed\n", vm_size);
+                       "[lagfx] apple-gfx: lagfx_task_create(vm_size=0x%" PRIx64
+                       ") failed\n", vm_size);
         *base_address_out = NULL;
         return NULL;
     }
@@ -158,9 +158,9 @@ apple_gfx_destroy_task(void *opaque, lagfx_task_t *task)
         }
     }
 
-    if (!linux_task) {
+  if (!linux_task) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "apple-gfx: destroy_task for unknown handle %p\n", task);
+                       "[lagfx] apple-gfx: destroy_task for unknown handle %p\n", task);
         return;
     }
 
@@ -236,10 +236,10 @@ apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
             break;
         }
     }
-    if (!linux_task) {
+   if (!linux_task) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "apple-gfx: map_memory for unknown task handle %p\n",
-                      task);
+                       "[lagfx] apple-gfx: map_memory for unknown task handle %p\n",
+                       task);
         return false;
     }
 
@@ -249,14 +249,14 @@ apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
         void *host_ptr;
 
         trace_apple_gfx_map_memory_range(i, range->guest_physical_address,
-                                         range->length);
+                                          range->length);
 
         host_ptr = apple_gfx_host_ptr_for_gpa_range(range->guest_physical_address,
-                                                    range->length, read_only,
-                                                    &region);
+                                                     range->length, read_only,
+                                                     &region);
         if (!host_ptr) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "apple-gfx: map_memory: GPA 0x%" PRIx64
+                          "[lagfx] apple-gfx: map_memory: GPA 0x%" PRIx64
                           " len 0x%" PRIx64 " not directly accessible\n",
                           range->guest_physical_address, range->length);
             success = false;
@@ -272,10 +272,10 @@ apple_gfx_map_memory(void *opaque, lagfx_task_t *task,
             new_region[i] = region;
         }
 
-        if (!lagfx_task_map_host_memory(task, cur_virtual_offset, host_ptr,
-                                         range->length, read_only)) {
+       if (!lagfx_task_map_host_memory(task, cur_virtual_offset, host_ptr,
+                                          range->length, read_only)) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "apple-gfx: lagfx_task_map_host_memory failed"
+                          "[lagfx] apple-gfx: lagfx_task_map_host_memory failed"
                           " at task_offset=0x%" PRIx64 " len=0x%" PRIx64 "\n",
                           cur_virtual_offset, range->length);
             success = false;
@@ -316,10 +316,10 @@ apple_gfx_unmap_memory(void *opaque, lagfx_task_t *task,
 
     trace_apple_gfx_unmap_memory(task, virtual_offset, length);
 
-    if (!lagfx_task_unmap(task, virtual_offset, length)) {
+  if (!lagfx_task_unmap(task, virtual_offset, length)) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "apple-gfx: lagfx_task_unmap failed"
-                      " at offset=0x%" PRIx64 " len=0x%" PRIx64 "\n",
+                       "[lagfx] apple-gfx: lagfx_task_unmap failed"
+                       " at offset=0x%" PRIx64 " len=0x%" PRIx64 "\n",
                       virtual_offset, length);
         return false;
     }
@@ -444,12 +444,12 @@ apple_gfx_frame_ready_bh(void *opaque)
     if (r == LAGFX_OK && new_frame) {
         if (stride_out != 0 && stride_out != stride) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "apple-gfx: stride mismatch: surface=%zu "
+                          "[lagfx] apple-gfx: stride mismatch: surface=%zu "
                           "library=%zu (frame may tear)\n",
                           stride, stride_out);
         }
         qemu_log_mask(LOG_TRACE,
-                      "apple-gfx: frame dispatched to DisplaySurface "
+                      "[lagfx] apple-gfx: frame dispatched to DisplaySurface "
                       "(%zux%zu, stride=%zu)\n",
                       width_px, height_px, stride);
         dpy_gfx_update(s->con, 0, 0, (int)width_px, (int)height_px);
@@ -457,7 +457,7 @@ apple_gfx_frame_ready_bh(void *opaque)
         /* Hot path while the renderer is still warming up — silent. */
     } else if (r != LAGFX_OK) {
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "apple-gfx: lagfx_display_read_frame failed "
+                      "[lagfx] apple-gfx: lagfx_display_read_frame failed "
                       "(status=%d)\n", (int)r);
     }
 
@@ -472,7 +472,6 @@ apple_gfx_vblank_tick(void *opaque)
 {
     AppleGFXLinuxState *s = opaque;
 
-    info_report("apple-gfx: vblank tick fired");
     trace_apple_gfx_vblank_tick();
 
     /* Tick may have been queued before unrealize completed; lagfx_dev
@@ -801,11 +800,10 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
      * wired into the QemuConsole's listener chain until vCPU start. */
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_REALTIME,
                   apple_gfx_vblank_tick, s);
-    uint64_t next_fire = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
-                         NANOSECONDS_PER_SECOND / 60;
+   uint64_t next_fire = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
+                          NANOSECONDS_PER_SECOND / 60;
     timer_mod(&s->vblank_timer, next_fire);
-    info_report("apple-gfx: vblank timer registered, first deadline=%" PRIu64 " ns",
-                next_fire);
+    trace_apple_gfx_vblank_timer_registered(next_fire);
 
     return true;
 }

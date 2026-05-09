@@ -234,7 +234,8 @@ apple_gfx_cursor_move(void) "cursor_move"
 apple_gfx_read(uint64_t offset, uint32_t value) "offset=0x%" PRIx64 " value=0x%x"
 apple_gfx_write(uint64_t offset, uint64_t val) "offset=0x%" PRIx64 " val=0x%" PRIx64
 apple_gfx_common_init(const char *name, size_t mmio_size) "%s mmio_size=0x%zx"
-apple_gfx_vblank_tick(void) "vblank_tick"
+apple_gfx_vblank_tick(void) "vblank tick"
+apple_gfx_vblank_timer_registered(uint64_t deadline) "vblank timer registered, first deadline=%" PRIu64 " ns"
 
 # apple-gfx-mmio.m (upstream; not compiled on Linux but entries
 # retained for macOS cross-builds of this fork).

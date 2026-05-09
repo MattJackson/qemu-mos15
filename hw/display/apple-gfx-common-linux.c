@@ -800,9 +800,11 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
      * wired into the QemuConsole's listener chain until vCPU start. */
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_REALTIME,
                   apple_gfx_vblank_tick, s);
-    timer_mod(&s->vblank_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
-              NANOSECONDS_PER_SECOND / 60);
+    uint64_t next_fire = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
+                         NANOSECONDS_PER_SECOND / 60;
+    timer_mod(&s->vblank_timer, next_fire);
+    qemu_log_mask(LOG_DEBUG, "apple-gfx: vblank timer init next_fire=%lu ns\n",
+                  next_fire);
 
     return true;
 }

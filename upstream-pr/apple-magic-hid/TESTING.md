@@ -1,4 +1,4 @@
-# Testing apple-magic-keyboard / apple-magic-tablet
+# Testing apple-magic-keyboard / apple-mighty-mouse
 
 ## Prerequisites
 
@@ -7,8 +7,8 @@
   including this series.
 * A macOS 15.x install image / pre-built guest disk for the
   fidelity-test path (skip to "Linux-guest sanity" otherwise).
-* A valid Apple SMC OSK for `isa-applesmc` (required by macOS
-  guests; not by the keyboard / tablet themselves).
+* A valid Apple SMC OSK for `isa-applesmc` (required by macOS guests;
+  not by the keyboard / mouse themselves).
 
 ## Linux-guest sanity (no macOS required)
 
@@ -23,7 +23,7 @@ qemu-system-x86_64 \
     -drive file=/path/to/scratch.img,format=raw,if=virtio,snapshot=on \
     -device qemu-xhci,id=xhci \
     -device apple-magic-keyboard,bus=xhci.0 \
-    -device apple-magic-tablet,bus=xhci.0 \
+    -device apple-mighty-mouse,bus=xhci.0 \
     -display none -serial stdio
 ```
 
@@ -31,18 +31,24 @@ In the guest:
 
 ```
 $ lsusb -v -d 05ac:026c   # apple-magic-keyboard
-$ lsusb -v -d 05ac:0265   # apple-magic-tablet
+$ lsusb -v -d 05ac:0304   # apple-mighty-mouse
 ```
 
 Expected:
 
-- `idVendor 0x05ac Apple, Inc.` / `idProduct 0x026c` (or `0x0265`).
+- `idVendor 0x05ac Apple, Inc.` / `idProduct 0x026c` (or `0x0304`).
 - `iManufacturer = "Apple Inc."`,
   `iProduct = "Magic Keyboard with Numeric Keypad"` /
-  `"Magic Trackpad"`.
+  `"Apple Mighty Mouse"`.
 - Keyboard: two interfaces, the second `bInterfaceClass=3`
   `bInterfaceSubClass=1` (Boot) `bInterfaceProtocol=1` (Keyboard).
+- Mouse: single interface, `bInterfaceClass=3 bInterfaceSubClass=1
+  bInterfaceProtocol=2` (Boot Mouse).
 - HID report descriptors decode without complaint.
+
+The legacy alias `apple-magic-tablet` resolves to the same
+`apple-mighty-mouse` implementation; both `-device` strings work
+during the back-compat window.
 
 ## macOS-guest fidelity test
 
@@ -58,7 +64,7 @@ qemu-system-x86_64 \
     -drive file=macos.qcow2,format=raw,if=virtio \
     -device qemu-xhci,id=xhci \
     -device apple-magic-keyboard,bus=xhci.0 \
-    -device apple-magic-tablet,bus=xhci.0 \
+    -device apple-mighty-mouse,bus=xhci.0 \
     -vnc :0 -qmp unix:/tmp/qmp.sock,server=on,wait=off
 ```
 
@@ -67,55 +73,59 @@ qemu-system-x86_64 \
 In the guest, after boot:
 
 ```
-$ ioreg -c IOUSBHostHIDDevice -l | grep -E 'AppleUSB|VendorID'
+$ ioreg -c IOUSBHostHIDDevice -l | grep -E 'AppleUSB|AppleHID|VendorID'
 ```
 
 Expected:
 
-- An `AppleUSBTopCaseHIDDriver` entry under the keyboard's
-  registry path (probe score 90000), with
+- An `AppleUSBTopCaseHIDDriver` entry under the keyboard's registry
+  path (probe score 90000), with
   `AppleDeviceManagementHIDEventService` and
-  `AppleUserHIDEventDriver` chained beneath. The previous
-  `IOUSBHostHIDDevice` (generic, score ~10000) entry is no
-  longer the matching driver.
+  `AppleHIDKeyboardEventDriverV2` chained beneath.
+- An `AppleHIDMouseEventDriver` / `IOHIDPointing` under the mouse's
+  registry path (Apple-VID match path, not the generic
+  `IOUSBHostHIDDevice` fallback).
 
-### Visible keystroke proof
+### Visible delivery proof
 
-The strongest visual proof is at recovery boot, where the
-language-picker UI advances on `Return`. Using QMP:
+QMP-driven input → screendump diff is the strongest reproducible
+proof. Drive a known sequence after boot, take a second screendump,
+diff against gold:
 
 ```
 # socat - UNIX-CONNECT:/tmp/qmp.sock
 {"execute":"qmp_capabilities"}
-{"execute":"screendump","arguments":{"filename":"/tmp/before.png"}}
-{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}
-{"execute":"screendump","arguments":{"filename":"/tmp/after.png"}}
+{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"a"}]}}
+{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"b"}]}}
+{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"c"}]}}
+{"execute":"input-send-event","arguments":{"events":[
+    {"type":"abs","data":{"axis":"x","value":15000}},
+    {"type":"abs","data":{"axis":"y","value":15000}}]}}
+{"execute":"screendump","arguments":{"filename":"/tmp/after-input.png"}}
 ```
 
-Then on the host:
+At loginwindow, the three keys produce three password dots and the
+mouse-move puts the cursor at screen centre. `compare -metric AE`
+against a recorded gold image should show ~0 differing pixels (within
+fuzz tolerance); a regression in HID delivery surfaces as a
+non-trivial diff.
 
-```
-$ compare -metric AE /tmp/before.png /tmp/after.png null:
-```
-
-Expected: AE >> 0 (typically 100k+ pixels differ as the panel
-advances). Compare the same pair against an `usb-kbd` baseline
-to confirm both keyboards drive UI; the apple-magic-keyboard
-proof is that this works *without* incurring the first-boot
-Keyboard Setup Assistant detour.
+The mos-docker test rig wires this up as `./mos verify 3` (Tier B
+input regression) — first run captures the gold, subsequent runs
+gold-diff strictly.
 
 ## Regression check
 
 `-device usb-kbd` / `-device usb-tablet` must continue to behave
 identically to current QEMU (no shared state, no shared vmstate
-section). Running both old and new devices simultaneously on the
-same xHCI controller must work — they do not collide on
-bus/port assignment because each is a separate `USBDevice`.
+section). Running both old and new devices simultaneously on the same
+xHCI controller must work — they do not collide on bus/port
+assignment because each is a separate `USBDevice`.
 
-A migration smoke test: cold-boot guest with apple-magic-keyboard
-attached, type, then `migrate exec:gzip > /tmp/m.gz`. The
-`unmigratable = 1` flag prevents migration of in-flight HID state
-across releases (matches the existing `usb-kbd` behaviour); the
-device cleanly fails the migrate step rather than silently
-corrupting input state. This is intentional; documented in the
-device's vmstate descriptor.
+A migration smoke test: cold-boot guest with apple-magic-keyboard +
+apple-mighty-mouse attached, type, then
+`migrate exec:gzip > /tmp/m.gz`. The `unmigratable = 1` flag prevents
+migration of in-flight HID state across releases (matches the existing
+`usb-kbd` behaviour); the device cleanly fails the migrate step rather
+than silently corrupting input state. This is intentional; documented
+in each device's vmstate descriptor.

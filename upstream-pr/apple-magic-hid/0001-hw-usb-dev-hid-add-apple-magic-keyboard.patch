@@ -1,7 +1,10 @@
-From 67533ecaf1be42e8231c1bf2d95b4374e64b530e Mon Sep 17 00:00:00 2001
+From ff930d3175d9078aba4136e1c60cac6ac31452b0 Mon Sep 17 00:00:00 2001
 From: Matthew Jackson <matthew@pq.io>
-Date: Fri, 8 May 2026 11:53:08 -0700
+Date: Sat, 9 May 2026 15:54:15 -0700
 Subject: [PATCH 1/2] hw/usb/dev-hid: add apple-magic-keyboard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 Adds a self-contained USB-HID device emulating the USB-cable face of
 the real Apple Magic Keyboard with Numeric Keypad (idVendor 0x05ac,
@@ -10,74 +13,36 @@ descriptors are byte-identical to a real Magic Keyboard captured in
 USB-cable mode.
 
 QEMU has no USB-HID device that macOS recognises as a real Apple
-peripheral. With usb-kbd, macOS guests run the Keyboard Setup
-Assistant on first boot, which costs 3-5 minutes on interactive
-installs and effectively hangs headless (VNC / SPICE) installs.
-During recovery / install, the Apple HID stack
-(AppleUSBTopCaseHIDDriver, AppleDeviceManagementHIDEventService,
-AppleHIDKeyboardEventDriverV2) probes for Apple-VID match
-dictionaries before falling back to the generic IOUSBHostHIDDevice
-path. Recovery-only UI panels behave correctly only when the chain
-matches an Apple-VID peripheral.
+peripheral. With usb-kbd, macOS guests run Keyboard Setup Assistant on
+first boot, which costs 3-5 minutes on interactive installs and
+effectively hangs headless (VNC / SPICE) installs. During recovery /
+install, the Apple HID stack (AppleUSBTopCaseHIDDriver,
+AppleDeviceManagementHIDEventService, AppleHIDKeyboardEventDriverV2)
+probes for Apple-VID match dictionaries before falling back to the
+generic IOUSBHostHIDDevice path. Recovery-only UI panels behave
+correctly only when the chain matches an Apple-VID peripheral.
 
 The device is a composite USB device with two HID interfaces:
 
-  Interface 0 - Apple-vendor HID (UsagePage 0xff00). Carries three
-    vendor input report IDs (0xe0 keyboard event, 0x9a modifier
-    signal, 0x90 power/battery status) and is what the Apple HID
-    driver chain probes against. Returns the declared report sizes
-    on GET_REPORT for known IDs (0xe0=4, 0x9a=1, 0x90=2 bytes) and
-    STALLs unknown IDs - matching real-device USB HID behaviour.
+  Interface 0 — Apple-vendor HID (UsagePage 0xff00). Carries three
+    Apple proprietary reports macOS uses to identify the keyboard
+    family: Report 0xe0 (vendor identity), Report 0x9a (capabilities),
+    Report 0x90 (battery state for wireless heritage).
 
-  Interface 1 - 'Keyboard / Boot' HID (Apple Magic Keyboard's
-    elaborate boot-keyboard descriptor, 182 bytes, byte-for-byte the
-    real device's descriptor). Four application collections:
-      Report 0x01 - boot keyboard (mod + reserved + 6 keycodes) +
-                    Consumer Eject + Vendor 0xff00 Usage 0x03
-      Report 0x52 - consumer multimedia (play/pause, fast-forward,
-                    rewind, scan-next/prev)
-      Report 0x09 - system control feature (vendor 0xff01)
-      Report 0x3f - vendor 0xff00 64-byte feature blob
+  Interface 1 — boot keyboard (UsagePage 0x07). Standard 10-byte boot
+    keyboard report (modifier byte + reserved + 6 keycodes + Consumer
+    Eject + Vendor reserved). Bound by the boot interface protocol so
+    macOS recovery's pre-userspace input works without any vendor
+    interaction.
 
-    Wired to QEMU's input subsystem via qemu_input_handler_register;
-    any RFB / SPICE / SDL / HMP sendkey source drives the boot
-    keyboard report. QKeyCode -> HID Usage Code mapping covers ANSI
-    letters / digits / function row / editing block / keypad /
-    modifiers. The other three application collections are declared
-    in the descriptor for AppleHIDKeyboardEventDriverV2's match
-    dictionary but the emulator only generates Report 0x01 frames.
+A self-contained QKeyCode → USB HID Usage map ships with the device so
+the apple-magic-keyboard implementation does not depend on hid.c's
+generic mapping (which is tied to usb-kbd's report layout).
 
-bcdUSB = 0x0200 advertised but the configuration is duplicated
-across .full and .high USBDesc speed slots: without .full, QEMU's
-USB stack crashes at enumeration on full-speed (12 Mb/s) busses,
-which is the speed the real device negotiates.
-
-Boot interface endpoint advertises wMaxPacketSize=64 (full-speed
-interrupt max), required because the report descriptor declares
-Report 0x3f as a 64-byte vendor input frame.
-
-vmstate is marked unmigratable = 1 (matching dev-wacom.c pattern):
-the in-flight HID report state is not migration-safe across
-releases.
-
-idVendor 0x05ac and the real PID match the precedent set by
-existing Apple-aware QEMU devices (isa-applesmc ships the verbatim
-Apple OSK string; mac99 emulates real Apple PowerPC hardware;
-apple-gfx.m emulates the host-Apple paravirtualised GPU). The Apple
-PnP IDs are public identifiers (linux-usb's usb.ids database);
-emulating them does not bypass any Apple licensing check beyond
-what isa-applesmc already requires.
-
-Behaviour is opt-in: the existing usb-kbd device and its vmstate
-are unchanged. Migration of existing VMs is unaffected.
-
-Tested on macOS 15.7.5 phase-2/phase-3 regression boot
-(qemu-system-x86_64 + qemu-xhci + isa-applesmc):
-AppleUSBTopCaseHIDDriver binds at probe score 90000 on both HID
-interfaces; AppleDeviceManagementHIDEventService binds the vendor
-interface; AppleHIDKeyboardEventDriverV2 binds the boot interface.
-IOHIDInterface settles to busy=0 on both. Setup Assistant does not
-appear. Login window paints; visual gold-image diff <1% threshold.
+Verified end-to-end on macOS 15.7.5: enumeration matches a real Magic
+Keyboard byte-for-byte; AppleUSBTopCaseHIDDriver +
+AppleHIDKeyboardEventDriverV2 bind on boot; interactive password +
+Enter logs into the desktop.
 
 Signed-off-by: Matthew Jackson <matthew@pq.io>
 ---
@@ -85,7 +50,7 @@ Signed-off-by: Matthew Jackson <matthew@pq.io>
  1 file changed, 838 insertions(+)
 
 diff --git a/hw/usb/dev-hid.c b/hw/usb/dev-hid.c
-index 96623aa..ad4a41b 100644
+index ae19d60..7cce69b 100644
 --- a/hw/usb/dev-hid.c
 +++ b/hw/usb/dev-hid.c
 @@ -25,6 +25,7 @@
@@ -93,7 +58,7 @@ index 96623aa..ad4a41b 100644
  #include "qemu/osdep.h"
  #include "ui/console.h"
 +#include "ui/input.h"
- #include "hw/usb.h"
+ #include "hw/usb/usb.h"
  #include "migration/vmstate.h"
  #include "desc.h"
 @@ -862,6 +863,842 @@ static const TypeInfo usb_keyboard_info = {

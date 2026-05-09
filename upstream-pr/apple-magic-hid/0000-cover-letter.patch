@@ -1,13 +1,16 @@
-From 7c4c987ba6b17cde682ffe7c89cdbf559a27ad62 Mon Sep 17 00:00:00 2001
+From 9473997adc414b416b47c124443ed04aedd4f395 Mon Sep 17 00:00:00 2001
 From: Matthew Jackson <matthew@pq.io>
-Date: Fri, 8 May 2026 11:56:44 -0700
-Subject: [PATCH 0/2] hw/usb/dev-hid: Apple Magic Keyboard and Magic Trackpad
+Date: Sat, 9 May 2026 15:55:58 -0700
+Subject: [PATCH 0/2] hw/usb/dev-hid: Apple Magic Keyboard and Mighty Mouse
  emulators
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 This series adds two new self-contained USB HID devices to
-hw/usb/dev-hid.c: apple-magic-keyboard and apple-magic-tablet,
+hw/usb/dev-hid.c: apple-magic-keyboard and apple-mighty-mouse,
 emulating the USB-cable face of the real Apple Magic Keyboard with
-Numeric Keypad (PID 0x026c) and Magic Trackpad 2 (PID 0x0265).
+Numeric Keypad (PID 0x026c) and Apple Mighty Mouse (PID 0x0304).
 
 Why this exists
 ---------------
@@ -18,13 +21,13 @@ peripheral. With usb-kbd / usb-tablet, macOS guests:
   * Run Keyboard Setup Assistant on first boot - costs 3-5 minutes
     on interactive installs and effectively hangs headless
     (VNC / SPICE) installs.
-  * Bind the generic IOUSBHostHIDDevice driver instead of the
-    Apple HID driver chain (AppleUSBTopCaseHIDDriver,
+
+  * Bind the generic IOUSBHostHIDDevice driver instead of the Apple
+    HID driver chain (AppleUSBTopCaseHIDDriver,
     AppleDeviceManagementHIDEventService,
-    AppleHIDKeyboardEventDriverV2,
-    AppleMultitouchTrackpadHIDEventDriver). Several recovery /
-    install / multi-touch UI panels behave correctly only when
-    the chain matches an Apple-VID peripheral.
+    AppleHIDKeyboardEventDriverV2, AppleHIDMouseEventDriver). Several
+    recovery / install / multi-touch UI panels behave correctly only
+    when the chain matches an Apple-VID peripheral.
 
 The new devices ship the real wire format (descriptors, HID report
 descriptors, endpoint topology) byte-identical to real hardware in
@@ -48,81 +51,109 @@ Both devices declare idVendor 0x05ac (Apple) and the real PIDs.
 Precedent: isa-applesmc ships the verbatim Apple OSK string; mac99
 emulates real Apple PowerPC hardware; apple-gfx.m (Phil Dennis-Jordan,
 2024) emulates Apple's host paravirt GPU. The Apple PnP IDs are
-public identifiers (linux-usb's usb.ids database) and emulating
-them does not bypass any Apple licensing check beyond what
-isa-applesmc already requires.
+public identifiers (linux-usb's usb.ids database) and emulating them
+does not bypass any Apple licensing check beyond what isa-applesmc
+already requires.
 
 If reviewers prefer the Apple PID/VID gated behind an
-apple-id=on/off device property (default off), a v2 patch is
-prepared addressing that. The v1 carries the Apple IDs
-unconditionally, matching the precedent set by sibling devices.
+apple-id=on/off device property (default off), a v2 patch is prepared
+addressing that. The v1 carries the Apple IDs unconditionally,
+matching the precedent set by sibling devices.
+
+Why Mighty Mouse, not Magic Trackpad
+------------------------------------
+
+An earlier draft of this series shipped apple-magic-tablet emulating
+Apple Magic Trackpad 2 (PID 0x0265). Magic Trackpad 2 binds
+AppleMultitouchTrackpadHIDEventDriver in macOS, which gates cursor on
+a 1387-byte vendor-multitouch frame format we do not have ground-truth
+wire bytes for. Guessing the wire layout produced AppleHIDStack hangs
+during recovery boots that wasted multiple debug cycles.
+
+Apple Mighty Mouse (PID 0x0304) is Apple's wired ball mouse, M9087,
+released 2005. It binds the generic AppleHIDMouseEventDriver /
+IOHIDPointing chain natively — handles standard 5-byte boot mouse
+reports (3-bit button mask + signed int8 dX/dY + signed int8 vWheel +
+signed int8 hWheel) without any vendor-specific protocol. Same
+"Apple-VID-or-fail" property the Apple HID stack checks for; cursor +
+click + scroll all work unconditionally. v1 of this series ships this
+device.
+
+For backward compatibility with downstream consumers using the earlier
+draft's name (which exists in some out-of-tree downstream forks),
+patch 0002 also registers a TypeInfo legacy alias `apple-magic-tablet`
+inheriting from the canonical `apple-mighty-mouse` type — both
+`-device` strings resolve to the same implementation. The alias has
+no permanent place in upstream and can be dropped any time after
+in-tree consumers move to the canonical name.
 
 Tested
 ------
 
-  * Linux-guest descriptor walk (xHCI + libusb) - descriptors and
-    HID report descriptors decode cleanly. PID/VID/strings as
-    expected.
+Tested on macOS 15.7.5 against a stock retail installer, mos-docker
+test rig (privileged container, network_mode=host, --device /dev/kvm,
+QEMU 11.0.0 patched binary).
 
-  * macOS 15.7.5 phase-2 + phase-3 regression boot - both PASS:
-      - phase 2 (patched QEMU + macOS HD + isa-applesmc + ICH9):
-        boot=106s, visual gold-image diff 0.87% / 2% threshold
-      - phase 3 (+ apple-magic-keyboard + apple-magic-tablet):
-        boot=77s,  visual gold-image diff 0.83% / 2% threshold
-    Apple HID driver chain binds at probe score 90000:
-      AppleUSBTopCaseHIDDriver on both keyboard interfaces +
-      AppleDeviceManagementHIDEventService on the vendor interface +
-      AppleHIDKeyboardEventDriverV2 on the boot interface +
-      AppleMultitouchTrackpadHIDEventDriver on the tablet
-    IOHIDInterface settles to busy=0 on every interface.
+  * Phase 2 regression (patched QEMU + macOS HD + isa-applesmc + ICH9
+    globals + generic usb-kbd / usb-tablet) — boot to login PASS,
+    visual gold-image diff well under 2% threshold.
 
-  * Visible keystroke proof - QMP send-key ret advances macOS
-    recovery's language-picker UI; compare -metric AE
-    before.png after.png null: returns a positive pixel-diff
-    metric (typical: >100k pixels changed).
+  * Phase 3 regression (+ apple-magic-keyboard + apple-mighty-mouse
+    swap) — boot to login PASS, visual gold-image diff well under 2%
+    threshold. macOS' AppleUSBTopCaseHIDDriver +
+    AppleHIDKeyboardEventDriverV2 bind on the keyboard;
+    AppleHIDMouseEventDriver / IOHIDPointing binds on the mouse.
 
-  * Regression: -device usb-kbd / -device usb-tablet continue to
-    behave identically to current QEMU.
+  * HID delivery verified via a second screendump after driving a
+    deterministic input sequence (QMP send-key for 'a','b','c' →
+    three password dots in the loginwindow field; QMP
+    input-send-event with absolute pointer to centre coords → cursor
+    visible at centre). Gold-image diff against
+    phase-3-input-gold.png passes — proves keyboard and mouse
+    delivery, not just enumeration.
 
-Patches
--------
+  * Linux-guest descriptor walk (xHCI + libusb) — descriptors and HID
+    report descriptors decode cleanly. PID/VID/strings as expected.
 
-  0001 - apple-magic-keyboard: composite device, two HID interfaces.
-    Interface 0 (vendor UsagePage 0xff00) carries vendor input
-    report IDs 0xe0 / 0x9a / 0x90 the Apple driver chain probes
-    against. Interface 1 carries the Magic Keyboard boot-keyboard
-    descriptor (182 bytes, byte-for-byte real device, four
-    application collections - boot kbd Report 0x01 + Consumer
-    Eject + Vendor 0xff Usage 0x03; consumer multimedia Report
-    0x52; system control feature Report 0x09; vendor Report 0x3f
-    64-byte feature blob). Wired to qemu_input_handler_register-
-    driven keystroke path. STALLs on GET_REPORT for undeclared
-    report IDs (matches real-device USB HID behaviour - returning
-    zero-fill there causes macOS's HID parser to wedge during
-    IOHIDInterface::start). SET_REPORT sets actual_length so the
-    host doesn't retry indefinitely.
+  * Visible keystroke proof — QMP send-key Return advances macOS
+    recovery's language-picker UI; cursor moves on QMP
+    input-send-event abs-pointer.
 
-  0002 - apple-magic-tablet: single HID interface, two input
-    reports. RID 0x01 is the 1 Hz heartbeat (3 bytes, 01 00 00);
-    RID 0x02 is the boot-mouse pointer frame (8 bytes - button +
-    signed int8 dX/dY + 2-byte high-byte reserved + reserved 0 +
-    surface state). Wired to QEMU's input subsystem accepting REL
-    motion + BTN events; the .sync callback flushes one Report 0x02
-    frame per input batch. A 30 ms idle timer flips surface state
-    to "lifted" (0x02) and emits a final lift frame.
+  * Migration smoke test — VM saves + restores without device
+    breakage on both new types.
 
-The vendor multitouch protocol (per-finger absolute frames) is
-gated behind a vendor-enable SET_REPORT macOS sends after
-enumeration. Out of scope for v1; the boot-mouse face is
-sufficient for cursor motion + click. A follow-up series would
-add it once the vendor-enable sequence is reverse-engineered.
+Per-patch summary
+-----------------
+
+  0001 — apple-magic-keyboard: composite USB device, two HID
+    interfaces. Interface 0 carries the Apple-vendor descriptor (182
+    bytes, byte-for-byte real device) with vendor reports 0xe0 / 0x9a
+    / 0x90 the Apple driver chain probes. Interface 1 carries the
+    Magic Keyboard boot-keyboard descriptor (boot kbd Report 0x01 +
+    Consumer Eject + Vendor 0xff Usage 0x03; consumer multimedia
+    Report 0x52; system control feature Report 0x09; vendor Report
+    0x3f 64-byte feature blob). Wired to the QEMU input subsystem via
+    qemu_input_handler_register(). STALLs on GET_REPORT for undeclared
+    report IDs (matches real-device USB HID behaviour — returning
+    zero-fill there causes macOS' HID parser to wedge during
+    IOHIDInterface::start). SET_REPORT sets actual_length so the host
+    doesn't retry indefinitely.
+
+  0002 — apple-mighty-mouse: single HID interface, single IN endpoint,
+    standard boot mouse + scroll Report Descriptor (5-byte report —
+    3-bit button mask + dX + dY + vWheel + hWheel). Wired to QEMU's
+    input subsystem accepting REL motion + ABS motion + BTN events.
+    ABS events (from VNC) are converted to REL via a last_abs_x/y
+    delta tracker. Bounded queue (depth 64) drains accumulated motion
+    across multiple reports per input sync so cursor movement stays
+    responsive under large pointer deltas. Includes the
+    `apple-magic-tablet` legacy TypeInfo alias as described above.
 
 Series root
 -----------
 
-Generated against current qemu-project/qemu master (post v11.0.0,
-2026-04-21). Each patch applies cleanly and `make check` is green
-on x86_64.
+Generated against qemu.git v11.0.0. Each patch applies cleanly and
+`make check` is green on x86_64.
 
   git fetch origin master
   git checkout -b apple-magic-hid origin/master
@@ -131,11 +162,10 @@ on x86_64.
 
 Matthew Jackson (2):
   hw/usb/dev-hid: add apple-magic-keyboard
-  hw/usb/dev-hid: add apple-magic-tablet
+  hw/usb/dev-hid: add apple-mighty-mouse
 
- hw/usb/dev-hid.c | 1408 ++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 1408 insertions(+)
+ hw/usb/dev-hid.c | 1411 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 1411 insertions(+)
 
 --
 2.50.1 (Apple Git-155)
-

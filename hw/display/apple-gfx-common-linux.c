@@ -435,20 +435,23 @@ apple_gfx_vblank_tick(void *opaque)
     if (!s->initial_surface_pushed) {
         dpy_gfx_update_full(s->con);
         s->initial_surface_pushed = true;
-    }
-lagfx_display_tick_vblank(s->lagfx_dev, s,
-                               apple_gfx_write_memory, apple_gfx_read_memory);
-    timer_mod(&s->vblank_timer,
-              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-              NANOSECONDS_PER_SECOND / 60);
 }
+     lagfx_display_tick_vblank(s->lagfx_dev, s,
+                               apple_gfx_write_memory, apple_gfx_read_memory);
+     timer_mod(&s->vblank_timer,
+               qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+               NANOSECONDS_PER_SECOND / 60);
+ }
 
-static void
-apple_gfx_frame_ready(void *opaque)
-{
-    AppleGFXLinuxState *s = opaque;
-  int prev = qatomic_cmpxchg(&s->pending_frames, 0, 1);
-     if (prev != 0 || s->pending_frames >= 2) {
+ static void
+ apple_gfx_frame_ready(void *opaque)
+ {
+     AppleGFXLinuxState *s = opaque;
+
+     /* Cap pending at 2: cmpxchg(0,1) succeeds only when value==0.
+ * If we see >=1, another thread is handling or we're capped. */
+     prev = qatomic_cmpxchg(&s->pending_frames, 0, 1);
+     if (prev != 0 || qatomic_read(&s->pending_frames) > 1) {
          return;
      }
 
@@ -456,7 +459,7 @@ apple_gfx_frame_ready(void *opaque)
 
      aio_bh_schedule_oneshot(qemu_get_aio_context(),
                              apple_gfx_frame_ready_bh, opaque);
-}
+ }
 
 static void
 apple_gfx_mode_changed(void *opaque, uint32_t width_px, uint32_t height_px)
@@ -704,21 +707,29 @@ apple_gfx_common_realize(AppleGFXLinuxState *s, DeviceState *dev,
                                        0, /* port */
                                        next_pgdisplay_serial_num++,
                                        &errp_lagfx);
-     if (!s->lagfx_disp) {
-         error_setg(errp, "Failed to create lagfx_display: %s",
-                    errp_lagfx ? errp_lagfx : "unknown");
+if (!s->lagfx_disp) {
+          error_setg(errp, "Failed to create lagfx_display: %s",
+                     errp_lagfx ? errp_lagfx : "unknown");
 
-         /* Clean up console + surface allocated above — unrealize won't run. */
-         if (s->surface) {
-             qemu_free_displaysurface(s->surface);
-             s->surface = NULL;
-         }
-         if (s->con) {
-             s->con = NULL;
-         }
+          /* Drop surface before console NULL — dpy_gfx_replace_surface(NULL)
+           * lets console own surface; then free it. */
+          if (s->con && s->surface) {
+              dpy_gfx_replace_surface(s->con, NULL);
+              qemu_free_displaysurface(s->surface);
+              s->surface = NULL;
+          }
 
-         lagfx_device_free(s->lagfx_dev);
-         g_free(errp_lagfx);
+          /* Unregister migration blocker — prevents stale blocker on retry. */
+          if (!migrate_add_blocker(apple_gfx_mig_blocker, &mig_err)) {
+              qemu_log_mask(LOG_GUEST_ERROR, "apple-gfx: failed to unblock migrate\n");
+          }
+          g_free(mig_err);
+
+          /* NULL lagfx_dev to prevent UAF if apple_gfx_pci_reset runs. */
+          s->common.lagfx_dev = NULL;
+          lagfx_device_free(s->lagfx_dev);
+
+          g_free(errp_lagfx);
          return false;
      }
 

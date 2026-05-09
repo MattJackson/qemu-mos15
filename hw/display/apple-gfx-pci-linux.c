@@ -232,15 +232,15 @@ apple_gfx_pci_unrealize(DeviceState *dev)
 
     aio_bh_poll(qemu_get_aio_context());
 
-    if (s->common.surface) {
-        qemu_free_displaysurface(s->common.surface);
-        s->common.surface = NULL;
+  /* Drop dpy_gfx_replace_surface(NULL) to let console own surface. */
+    if (s->con && s->common.surface) {
+        dpy_gfx_replace_surface(s->con, NULL);
     }
 
-  if (s->common.cursor) {
-         cursor_unref(s->common.cursor);
-         s->common.cursor = NULL;
-     }
+    if (s->common.cursor) {
+        cursor_unref(s->common.cursor);
+        s->common.cursor = NULL;
+    }
 
      qemu_mutex_destroy(&s->common.task_mutex);
  }

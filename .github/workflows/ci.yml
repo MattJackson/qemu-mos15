@@ -9,7 +9,7 @@ on:
 # Pin QEMU version exactly to the one docker-macos builds against
 # (see docker-macos/Dockerfile ARG QEMU_VERSION). Bump both in lockstep.
 env:
-  QEMU_VERSION: "10.2.2"
+  QEMU_VERSION: "11.0.0"
 
 jobs:
   # -------------------------------------------------------------------------

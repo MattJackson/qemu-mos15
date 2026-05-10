@@ -477,6 +477,7 @@ static void amtp_input_event(DeviceState *dev, QemuConsole *src,
             s->button_left = btn->down;
         }
         s->pending_event = true;
+        fprintf(stderr, "AMTP: btn evt button=%d down=%d\n", btn->button, btn->down);
         break;
     }
     case INPUT_EVENT_KIND_ABS: {
@@ -486,10 +487,10 @@ static void amtp_input_event(DeviceState *dev, QemuConsole *src,
         } else if (m->axis == INPUT_AXIS_Y) {
             s->abs_y = m->value;
         }
-        /* ABS pointer present implies the user is "in contact" with the
-         * trackpad surface — VNC has no separate hover/contact distinction. */
         s->finger_down = true;
         s->pending_event = true;
+        fprintf(stderr, "AMTP: abs evt axis=%d val=%d (now %d,%d)\n",
+                m->axis, m->value, s->abs_x, s->abs_y);
         break;
     }
     default:
@@ -528,6 +529,8 @@ static void amtp_input_sync(DeviceState *dev)
         if (dy < -127) dy = -127;
         s->prev_abs_x = s->abs_x;
         s->prev_abs_y = s->abs_y;
+        fprintf(stderr, "AMTP: sync boot-mouse dx=%d dy=%d btn=%d\n",
+                (int)dx, (int)dy, s->button_left);
         amtp_emit_boot_mouse(s, (int8_t)dx, (int8_t)dy,
                              s->button_left ? 0x01 : 0x00);
     }
@@ -745,6 +748,9 @@ static void usb_apple_magic_trackpad_handle_data(USBDevice *dev, USBPacket *p)
 
     USBAppleMagicTrackpadReport *r = &s->queue[s->q_tail];
     s->q_tail = (s->q_tail + 1) & (AMTP_QUEUE_DEPTH - 1);
+    fprintf(stderr, "AMTP: deliver EP3 IN len=%d data:", r->len);
+    for (int i = 0; i < r->len && i < 8; i++) fprintf(stderr, " %02x", r->data[i]);
+    fprintf(stderr, "\n");
     usb_packet_copy(p, r->data, r->len);
 }
 

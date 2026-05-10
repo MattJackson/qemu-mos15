@@ -1,0 +1,140 @@
+name: Build + push QEMU images to GHCR
+
+# Builds two artifact images and pushes to ghcr.io/mattjackson:
+#   - mos-qemu-patched:<sha>  — patched QEMU + libapplegfx-vulkan
+#   - mos-qemu-oem:<version>  — vanilla upstream QEMU (manual / dispatch)
+#
+# These images are pure artifacts (`FROM scratch` with /usr/* layout).
+# mos-docker FROM them and COPY /usr to assemble its runtime image,
+# avoiding a 4-min QEMU compile on every script change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only rebuild patched image when files that actually feed it change.
+      - 'hw/**'
+      - 'pc-bios/**'
+      - 'Dockerfile.patched'
+      - '.github/workflows/build-image.yml'
+  workflow_dispatch:
+    inputs:
+      libapplegfx_sha:
+        description: 'libapplegfx-vulkan SHA or branch (default: main)'
+        type: string
+        default: 'main'
+      build_oem:
+        description: 'Also rebuild the OEM image (only needed on QEMU version bumps)'
+        type: boolean
+        default: false
+
+# Pin QEMU version exactly to ci.yml (which validates against this version).
+# Bump in lockstep when upgrading.
+env:
+  QEMU_VERSION: '11.0.0'
+  REGISTRY: ghcr.io
+  OWNER: mattjackson
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Patched QEMU + libapplegfx-vulkan. Tagged by:
+  #   :main          — latest main branch (mos-docker default)
+  #   :<commit-sha>  — exact pinning for reproducible builds
+  # -------------------------------------------------------------------------
+  build-patched:
+    name: build mos-qemu-patched
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve libapplegfx-vulkan SHA
+        id: lagfx
+        run: |
+          # Default to workflow input on dispatch, else 'main'. Resolve
+          # to a real SHA so the image tag is content-addressable.
+          input_sha="${{ github.event.inputs.libapplegfx_sha }}"
+          ref="${input_sha:-main}"
+          full_sha=$(git ls-remote https://github.com/MattJackson/libapplegfx-vulkan.git "$ref" \
+                     | cut -f1 | head -c 12)
+          if [ -z "$full_sha" ]; then
+            echo "::error::Could not resolve libapplegfx-vulkan SHA for ref '$ref'"
+            exit 1
+          fi
+          echo "sha=$full_sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved libapplegfx-vulkan: $ref → $full_sha"
+
+      - name: Build + push patched image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.patched
+          push: true
+          # Three tags: branch, commit-sha (qemu), commit-sha (qemu+lagfx pinned).
+          # The third is the fully reproducible build artifact for pinning
+          # mos-docker against an exact (qemu, lagfx) pair.
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:main
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}-lagfx-${{ steps.lagfx.outputs.sha }}
+          build-args: |
+            QEMU_VERSION=${{ env.QEMU_VERSION }}
+            LIBAPPLEGFX_SHA=${{ steps.lagfx.outputs.sha }}
+          cache-from: type=gha,scope=patched
+          cache-to: type=gha,scope=patched,mode=max
+
+      - name: Print resolved tags
+        run: |
+          echo "Pushed:"
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:main"
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}"
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}-lagfx-${{ steps.lagfx.outputs.sha }}"
+
+  # -------------------------------------------------------------------------
+  # OEM (vanilla upstream) QEMU. Only runs on workflow_dispatch with
+  # build_oem=true OR when Dockerfile.oem itself changes. Tagged by
+  # version since the binary is invariant per QEMU release.
+  # -------------------------------------------------------------------------
+  build-oem:
+    name: build mos-qemu-oem
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.build_oem == 'true' ||
+      contains(github.event.head_commit.modified, 'Dockerfile.oem')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push OEM image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.oem
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-oem:${{ env.QEMU_VERSION }}
+          build-args: |
+            QEMU_VERSION=${{ env.QEMU_VERSION }}
+          cache-from: type=gha,scope=oem
+          cache-to: type=gha,scope=oem,mode=max

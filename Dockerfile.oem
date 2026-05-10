@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1.7
+# mos-qemu — vanilla upstream QEMU, prebuilt OEM artifact image. Pushed
+# to ghcr.io/mattjackson/mos-qemu-oem:<QEMU_VERSION> by
+# `.github/workflows/build-image.yml`. Used as the phase 1 OEM-bisect
+# binary in mos-docker (test phase 1 = "is the patched binary the
+# regression cause? boot the same args under unpatched upstream").
+#
+# Triggered only on QEMU_VERSION bumps or manual workflow_dispatch —
+# this image rarely needs to rebuild.
+
+ARG QEMU_VERSION=11.0.0
+
+FROM alpine:3.21 AS builder
+ARG QEMU_VERSION
+
+RUN apk add --no-cache \
+    build-base python3 ninja meson pkgconf \
+    glib-dev pixman-dev libcap-ng-dev libseccomp-dev \
+    libslirp-dev libaio-dev curl bash dtc-dev \
+    ccache
+
+ENV PATH="/usr/lib/ccache/bin:${PATH}" \
+    CCACHE_DIR=/root/.ccache \
+    CCACHE_MAXSIZE=2G \
+    CCACHE_BASEDIR=/tmp \
+    CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime,file_macro,locale,pch_defines \
+    CCACHE_COMPILERCHECK=content \
+    CCACHE_NOHASHDIR=1
+
+ADD https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz /tmp/qemu-upstream.tar.xz
+
+RUN --mount=type=cache,target=/root/.ccache \
+    rm -rf /tmp/qemu-${QEMU_VERSION} /tmp/qemu-build \
+    && mkdir -p /tmp/qemu-build \
+    && tar xJ -C /tmp -f /tmp/qemu-upstream.tar.xz \
+    && cd /tmp/qemu-build \
+    && /tmp/qemu-${QEMU_VERSION}/configure \
+        --target-list=x86_64-softmmu \
+        --prefix=/usr \
+        --enable-kvm --enable-slirp --enable-linux-aio \
+        --enable-cap-ng --enable-seccomp --enable-vnc \
+        --disable-docs --disable-debug-info --disable-werror \
+    && make -j$(nproc) \
+    && make DESTDIR=/tmp/qemu-install install \
+    ; ccache -s || true
+
+# Smoke test.
+RUN BUILT_VER=$(/tmp/qemu-install/usr/bin/qemu-system-x86_64 --version 2>&1 | head -1) \
+    && echo "$BUILT_VER" \
+    && echo "$BUILT_VER" | grep -q "version ${QEMU_VERSION}" \
+    || (echo "STALE BUILD: binary is '$BUILT_VER', expected version ${QEMU_VERSION}." && exit 1)
+
+FROM scratch
+COPY --from=builder /tmp/qemu-install/ /

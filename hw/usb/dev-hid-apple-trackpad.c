@@ -728,10 +728,19 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
 static void usb_apple_magic_trackpad_handle_data(USBDevice *dev, USBPacket *p)
 {
     USBAppleMagicTrackpadState *s = USB_APPLE_MAGIC_TRACKPAD(dev);
+    static unsigned long poll_count[8] = {0};
 
     if (p->pid != USB_TOKEN_IN) {
         p->status = USB_RET_STALL;
         return;
+    }
+
+    /* Trace every IN poll on every endpoint (rate-limited via counter). */
+    int ep = p->ep->nr;
+    if (ep < 8) poll_count[ep]++;
+    if (ep < 8 && (poll_count[ep] & 0x7f) == 0) {
+        fprintf(stderr, "AMTP: poll EP%d IN #%lu qcount=%u\n",
+                ep, poll_count[ep], amtp_q_count(s));
     }
 
     /* Only Interface 1 EP3 IN carries cursor/multitouch data in v1. Other

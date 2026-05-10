@@ -68,76 +68,57 @@ static const USBDescStrings desc_strings_amtp = {
  * sequence and rejects close-but-not-equal descriptors.
  * ------------------------------------------------------------------------ */
 
-/* Single-interface boot-mouse descriptor. 56 bytes.
- *
- * v3.0b: dropped the 4-iface "Magic Trackpad" surface (vendor TopCase
- * iface 0, multitouch iface 1, vendor 0xd iface 2, vendor 0x03 iface 3)
- * because:
- *   - Apple VID + iface 0 vendor TopCase triggers AppleUSBTopCaseHIDDriver
- *     which anchors the rest of the chain to either AppleMultitouch
- *     TrackpadHIDEventDriver (PID 0x0265, parser-type=1000 silently
- *     drops every report) or AppleUserUSBHostHIDDevice dext (which
- *     crashes on iface start). Neither path delivers cursor events.
- *   - Without iface 0/2/3, macOS can't anchor the Apple-specific stack
- *     and falls through to the generic boot-mouse driver chain
- *     (AppleHIDMouseEventDriver / IOHIDPointing) which DIRECTLY
- *     consumes 4-byte boot-mouse Report 0x02. Cursor moves.
- *
- * This is a single 3-button + dx + dy boot mouse with Report ID 0x02.
- * 4 reserved bytes appended so the wire frame is 8 bytes total
- * (matching our amtp_emit_boot_mouse output shape). */
+/* Interface 0 — vendor reports (Reports 0xe0 / 0x9a / 0x90). 83 bytes. */
 static const uint8_t amtp_iface0_report_desc[] = {
-    0x05, 0x01,                   /* Usage Page (Generic Desktop)        */
-    0x09, 0x02,                   /* Usage (Mouse)                       */
-    0xa1, 0x01,                   /* Collection (Application)            */
-    0x09, 0x01,                   /*   Usage (Pointer)                   */
-    0xa1, 0x00,                   /*   Collection (Physical)             */
-    0x85, 0x02,                   /*     Report ID (0x02)                */
-    0x05, 0x09,                   /*     Usage Page (Button)             */
-    0x19, 0x01, 0x29, 0x03,       /*     Usage Min..Max (1..3)           */
-    0x15, 0x00, 0x25, 0x01,       /*     Logical Min..Max (0..1)         */
-    0x95, 0x03, 0x75, 0x01,       /*     Count=3 Size=1                  */
-    0x81, 0x02,                   /*     Input (Data,Var,Abs) — buttons  */
-    0x95, 0x01, 0x75, 0x05,       /*     Count=1 Size=5                  */
-    0x81, 0x01,                   /*     Input (Const)         — padding */
-    0x05, 0x01,                   /*     Usage Page (Generic Desktop)    */
-    0x09, 0x30, 0x09, 0x31,       /*     Usage (X), Usage (Y)            */
-    0x15, 0x81, 0x25, 0x7f,       /*     Logical Min..Max (-127..127)    */
-    0x75, 0x08, 0x95, 0x02,       /*     Size=8 Count=2                  */
-    0x81, 0x06,                   /*     Input (Data,Var,Rel)  — dx/dy   */
-    0x95, 0x04, 0x75, 0x08,       /*     Count=4 Size=8                  */
-    0x81, 0x01,                   /*     Input (Const)         — 4B pad  */
-    0xc0,                         /*   End Collection (Physical)         */
-    0xc0,                         /* End Collection (Application)        */
+    0x06, 0x00, 0xff, 0x09, 0x0b, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x0b,
+    0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x96, 0x04, 0x00, 0x85, 0xe0,
+    0x81, 0x22, 0x09, 0x0b, 0x96, 0x01, 0x00, 0x85, 0x9a, 0x81, 0x22, 0xc0,
+    0x06, 0x00, 0xff, 0x09, 0x14, 0xa1, 0x01, 0x85, 0x90, 0x05, 0x84, 0x75,
+    0x01, 0x95, 0x03, 0x15, 0x00, 0x25, 0x01, 0x09, 0x61, 0x05, 0x85, 0x09,
+    0x44, 0x09, 0x46, 0x81, 0x02, 0x95, 0x05, 0x81, 0x01, 0x75, 0x08, 0x95,
+    0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x09, 0x65, 0x81, 0x02, 0xc0,
+};
+
+/* Interface 1 — Mouse + Digitizer + Vendor 0xc (Reports 0x02 / 0x3f / 0x44).
+ * 110 bytes. Note: Report 0x02 declares an 8-byte boot-mouse shape, but after
+ * SET_REPORT(feature, 0x02, {0x02, 0x01}) the device re-uses Report 0x02
+ * with a variable-length multitouch shape (12 + 9N bytes). The Report 0x44
+ * declaration is a pre-allocated max-size slot the device never fills on
+ * USB-cable mode. */
+static const uint8_t amtp_iface1_report_desc[] = {
+    0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09,
+    0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x85, 0x02, 0x95, 0x03,
+    0x75, 0x01, 0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01, 0x05, 0x01,
+    0x09, 0x30, 0x09, 0x31, 0x15, 0x81, 0x25, 0x7f, 0x75, 0x08, 0x95, 0x02,
+    0x81, 0x06, 0x95, 0x04, 0x75, 0x08, 0x81, 0x01, 0xc0, 0xc0, 0x05, 0x0d,
+    0x09, 0x05, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x0c, 0x15, 0x00, 0x26,
+    0xff, 0x00, 0x75, 0x08, 0x95, 0x10, 0x85, 0x3f, 0x81, 0x22, 0xc0, 0x06,
+    0x00, 0xff, 0x09, 0x0c, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x0c, 0x15,
+    0x00, 0x26, 0xff, 0x00, 0x85, 0x44, 0x75, 0x08, 0x96, 0x6b, 0x05, 0x81,
+    0x00, 0xc0,
+};
+
+/* Interface 2 — vendor 0xd (Report 0x3f input + 0x53 output). 36 bytes. */
+static const uint8_t amtp_iface2_report_desc[] = {
+    0x06, 0x00, 0xff, 0x09, 0x0d, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x0d,
+    0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x85, 0x3f, 0x96, 0x0f, 0x00,
+    0x81, 0x02, 0x09, 0x0d, 0x85, 0x53, 0x96, 0x3f, 0x00, 0x91, 0x02, 0xc0,
+};
+
+/* Interface 3 — vendor 0x03 (Report 0xc0 input). 27 bytes. */
+static const uint8_t amtp_iface3_report_desc[] = {
+    0x06, 0x00, 0xff, 0x09, 0x03, 0xa1, 0x01, 0x06, 0x00, 0xff, 0x09, 0x03,
+    0x15, 0x00, 0x26, 0xff, 0x00, 0x85, 0xc0, 0x96, 0x6b, 0x00, 0x75, 0x08,
+    0x81, 0x02, 0xc0,
 };
 
 /* ---------------------------------------------------------------------------
  * USB descriptor structures
  * ------------------------------------------------------------------------ */
 
-/*
- * v3.0c VID escape: 0x05ac (Apple) alone routes us into macOS'
- * `AppleUserUSBHostHIDDevice` DriverKit catch-all for Apple-VID HID
- * devices without a specific kext personality. That dext was crashing
- * before v1.7 (server exit before start), and even when it stays
- * alive on a simpler descriptor it doesn't deliver pointer events to
- * IOHIDSystem. Combined with the multitouch driver's parser block
- * (RE in memory/research_apple_multitouch_parser_re.md) every Apple-
- * VID path drops our reports.
- *
- * Using VID 0x046d (Logitech) escapes the Apple driver chain
- * entirely. macOS' generic boot-mouse stack (AppleHIDMouseEventDriver
- * kext) binds to any USB HID device with bSubClass=1 bProto=2
- * regardless of VID/PID. Decades-old, reliable, processes 8-byte
- * Report 0x02 directly.
- *
- * Tradeoff: system_profiler shows "Logitech Inc." instead of
- * "Apple Inc.". Cursor moves. QEMU device name stays
- * apple-magic-trackpad — only USB-host-visible VID is changed.
- */
-#define AMTP_VID                0x046d
-#define AMTP_PID                0xc52b
-#define AMTP_BCD_DEVICE         0x0100
+#define AMTP_VID                0x05ac
+#define AMTP_PID                0x0265
+#define AMTP_BCD_DEVICE         0x0871
 
 #define AMTP_EP_IFACE0_IN       1   /* 0x81 — vendor heartbeats */
 #define AMTP_EP_IFACE1_IN       3   /* 0x83 — multitouch / boot mouse */
@@ -146,11 +127,43 @@ static const uint8_t amtp_iface0_report_desc[] = {
 #define AMTP_EP_IFACE3_IN       5   /* 0x85 — vendor 0x03 input */
 
 static const USBDescIface desc_iface_amtp[] = {
-    /* Single boot-mouse interface. bSubClass=1 bProto=2 (Boot Mouse) so
-     * macOS' AppleHIDMouseEventDriver / IOHIDPointing binds directly
-     * and consumes Report 0x02 from EP1 IN. */
+    /* Interface 0 — vendor reports (Reports 0xe0 / 0x9a / 0x90) */
     {
         .bInterfaceNumber              = 0,
+        .bNumEndpoints                 = 1,
+        .bInterfaceClass               = USB_CLASS_HID,
+        .bInterfaceSubClass            = 0,
+        .bInterfaceProtocol            = 0,
+        .iInterface                    = STR_AMTP_IFACE0,
+        .ndesc                         = 1,
+        .descs = (USBDescOther[]) {
+            {
+                /* HID class descriptor */
+                .data = (uint8_t[]) {
+                    0x09,                /* bLength */
+                    USB_DT_HID,          /* bDescriptorType */
+                    0x10, 0x01,          /* bcdHID 0x0110 */
+                    0x00,                /* bCountryCode */
+                    0x01,                /* bNumDescriptors */
+                    USB_DT_REPORT,       /* bDescriptorType */
+                    sizeof(amtp_iface0_report_desc), 0x00,
+                },
+            },
+        },
+        .eps = (USBDescEndpoint[]) {
+            {
+                .bEndpointAddress      = USB_DIR_IN | AMTP_EP_IFACE0_IN,
+                .bmAttributes          = USB_ENDPOINT_XFER_INT,
+                .wMaxPacketSize        = 16,
+                .bInterval             = 8,
+            },
+        },
+    },
+    /* Interface 1 — Mouse + Digitizer + Vendor 0xc (Reports 0x02 / 0x3f / 0x44).
+     * bSubClass=1 bProto=2 = Boot Mouse — drives the initial driver bind even
+     * before the vendor SET_REPORT switches the device into multitouch mode. */
+    {
+        .bInterfaceNumber              = 1,
         .bNumEndpoints                 = 1,
         .bInterfaceClass               = USB_CLASS_HID,
         .bInterfaceSubClass            = 1,    /* Boot */
@@ -162,7 +175,7 @@ static const USBDescIface desc_iface_amtp[] = {
                 .data = (uint8_t[]) {
                     0x09, USB_DT_HID, 0x10, 0x01, 0x00,
                     0x01, USB_DT_REPORT,
-                    sizeof(amtp_iface0_report_desc), 0x00,
+                    sizeof(amtp_iface1_report_desc), 0x00,
                 },
             },
         },
@@ -170,8 +183,68 @@ static const USBDescIface desc_iface_amtp[] = {
             {
                 .bEndpointAddress      = USB_DIR_IN | AMTP_EP_IFACE1_IN,
                 .bmAttributes          = USB_ENDPOINT_XFER_INT,
-                .wMaxPacketSize        = 8,
+                .wMaxPacketSize        = 64,
                 .bInterval             = 1,    /* 125µs poll @ high-speed */
+            },
+        },
+    },
+    /* Interface 2 — vendor 0xd (Reports 0x3f input + 0x53 output) */
+    {
+        .bInterfaceNumber              = 2,
+        .bNumEndpoints                 = 2,
+        .bInterfaceClass               = USB_CLASS_HID,
+        .bInterfaceSubClass            = 0,
+        .bInterfaceProtocol            = 0,
+        .iInterface                    = STR_AMTP_IFACE2,
+        .ndesc                         = 1,
+        .descs = (USBDescOther[]) {
+            {
+                .data = (uint8_t[]) {
+                    0x09, USB_DT_HID, 0x10, 0x01, 0x00,
+                    0x01, USB_DT_REPORT,
+                    sizeof(amtp_iface2_report_desc), 0x00,
+                },
+            },
+        },
+        .eps = (USBDescEndpoint[]) {
+            {
+                .bEndpointAddress      = USB_DIR_IN | AMTP_EP_IFACE2_IN,
+                .bmAttributes          = USB_ENDPOINT_XFER_INT,
+                .wMaxPacketSize        = 16,
+                .bInterval             = 8,
+            },
+            {
+                .bEndpointAddress      = USB_DIR_OUT | AMTP_EP_IFACE2_OUT,
+                .bmAttributes          = USB_ENDPOINT_XFER_INT,
+                .wMaxPacketSize        = 64,
+                .bInterval             = 2,
+            },
+        },
+    },
+    /* Interface 3 — vendor 0x03 (Report 0xc0 input) */
+    {
+        .bInterfaceNumber              = 3,
+        .bNumEndpoints                 = 1,
+        .bInterfaceClass               = USB_CLASS_HID,
+        .bInterfaceSubClass            = 0,
+        .bInterfaceProtocol            = 0,
+        .iInterface                    = STR_AMTP_IFACE3,
+        .ndesc                         = 1,
+        .descs = (USBDescOther[]) {
+            {
+                .data = (uint8_t[]) {
+                    0x09, USB_DT_HID, 0x10, 0x01, 0x00,
+                    0x01, USB_DT_REPORT,
+                    sizeof(amtp_iface3_report_desc), 0x00,
+                },
+            },
+        },
+        .eps = (USBDescEndpoint[]) {
+            {
+                .bEndpointAddress      = USB_DIR_IN | AMTP_EP_IFACE3_IN,
+                .bmAttributes          = USB_ENDPOINT_XFER_INT,
+                .wMaxPacketSize        = 64,
+                .bInterval             = 2,
             },
         },
     },
@@ -183,7 +256,7 @@ static const USBDescDevice desc_device_amtp = {
     .bNumConfigurations    = 1,
     .confs = (USBDescConfig[]) {
         {
-            .bNumInterfaces        = 1,
+            .bNumInterfaces        = 4,
             .bConfigurationValue   = 1,
             .iConfiguration        = 0,
             .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
@@ -237,9 +310,6 @@ typedef struct USBAppleMagicTrackpadState {
     int32_t  abs_y;
     int32_t  prev_abs_x;
     int32_t  prev_abs_y;
-    bool     prev_abs_valid;     /* false until first ABS event seen, so we
-                                  * don't compute a huge bogus delta from
-                                  * prev=(0,0) on the first emit. */
     bool     button_left;
     bool     finger_down;       /* edge-triggered: was a touch active last frame? */
     bool     pending_event;
@@ -459,20 +529,16 @@ static void amtp_input_sync(DeviceState *dev)
          * snappy cursor while keeping each delta within the int8 range
          * a boot-mouse report can carry. Larger pointer jumps in one
          * frame get clamped to ±127. */
-        int32_t dx = 0, dy = 0;
-        if (s->prev_abs_valid) {
-            int32_t dx_abs = s->abs_x - s->prev_abs_x;
-            int32_t dy_abs = s->abs_y - s->prev_abs_y;
-            dx = dx_abs / 4;
-            dy = dy_abs / 4;
-            if (dx > 127)  dx = 127;
-            if (dx < -127) dx = -127;
-            if (dy > 127)  dy = 127;
-            if (dy < -127) dy = -127;
-        }
+        int32_t dx_abs = s->abs_x - s->prev_abs_x;
+        int32_t dy_abs = s->abs_y - s->prev_abs_y;
+        int32_t dx = dx_abs / 4;
+        int32_t dy = dy_abs / 4;
+        if (dx > 127)  dx = 127;
+        if (dx < -127) dx = -127;
+        if (dy > 127)  dy = 127;
+        if (dy < -127) dy = -127;
         s->prev_abs_x = s->abs_x;
         s->prev_abs_y = s->abs_y;
-        s->prev_abs_valid = true;
         amtp_emit_boot_mouse(s, (int8_t)dx, (int8_t)dy,
                              s->button_left ? 0x01 : 0x00);
     }
@@ -499,7 +565,6 @@ static void usb_apple_magic_trackpad_handle_reset(USBDevice *dev)
     s->mt_seq             = 0;
     s->prev_abs_x         = 0;
     s->prev_abs_y         = 0;
-    s->prev_abs_valid     = false;
     s->q_head = s->q_tail = 0;
 }
 
@@ -525,12 +590,23 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
      * report layout and bails. Pattern mirrors dev-hid.c:1500 for
      * apple-magic-keyboard. */
     case InterfaceRequest | USB_REQ_GET_DESCRIPTOR:
-        if ((value >> 8) == 0x22 && index == 0) {
-            uint16_t copy = length < sizeof(amtp_iface0_report_desc)
-                          ? length : sizeof(amtp_iface0_report_desc);
-            memcpy(data, amtp_iface0_report_desc, copy);
-            p->actual_length = copy;
-            return;
+        if ((value >> 8) == 0x22) {
+            const uint8_t *rd = NULL;
+            uint16_t rd_len = 0;
+            uint16_t copy;
+            switch (index) {
+            case 0: rd = amtp_iface0_report_desc; rd_len = sizeof(amtp_iface0_report_desc); break;
+            case 1: rd = amtp_iface1_report_desc; rd_len = sizeof(amtp_iface1_report_desc); break;
+            case 2: rd = amtp_iface2_report_desc; rd_len = sizeof(amtp_iface2_report_desc); break;
+            case 3: rd = amtp_iface3_report_desc; rd_len = sizeof(amtp_iface3_report_desc); break;
+            default: break;
+            }
+            if (rd) {
+                copy = length < rd_len ? length : rd_len;
+                memcpy(data, rd, copy);
+                p->actual_length = copy;
+                return;
+            }
         }
         break;
     /* HID class SET_REPORT — macOS issues feature/Report-0x02/{0x02, 0x01} on
@@ -572,15 +648,71 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
     case HID_SET_PROTOCOL:
         break;
 
-    /* HID class GET_REPORT — only Report 0x02 (boot mouse: button + dx +
-     * dy + 4B reserved = 7B payload). Sizes must mirror the descriptor
-     * exactly. */
+    /* HID class GET_REPORT — per-interface, per-Report-ID. Sizes mirror the
+     * Report Descriptor declarations exactly (decoded from the byte arrays
+     * above with tools/hid-decode.py); a size mismatch trips the macOS HID
+     * parser into a (a,4020001) busy timeout and the driver-chain probe
+     * (AppleMultitouchTrackpadHIDEventDriver) falls through to the Bluetooth
+     * Setup Assistant. STALL for IDs not declared on the queried interface
+     * (real-device behaviour). Pattern mirrors dev-hid.c's apple-magic-keyboard.
+     *
+     * Interface 0 — Apple TopCase vendor (shared across kbd and trackpad):
+     *   0xe0  4B Input — vendor TopCase event
+     *   0x9a  1B Input — modifier signal
+     *   0x90  2B Input — battery (AC/charge bits + level)
+     *
+     * Interface 1 — Mouse + Digitizer + Vendor 0xc:
+     *   0x02  7B Input  — boot-mouse (button + dx + dy + 4B reserved). After
+     *                     SET_REPORT(feat,0x02,{0x02,0x01}) the same Report ID
+     *                     carries variable-length multitouch frames over EP3
+     *                     IN, but the HID-class GET_REPORT reply still uses
+     *                     the descriptor-declared 7B shape.
+     *   0x3f 16B Input  — vendor 0xc reply (descriptor REPORT_COUNT=16, NOT 15
+     *                     — Iface 2's 0x3f is 15B but Iface 1's is 16B).
+     *   0x44 1387B      — pre-allocated descriptor slot the device never fills
+     *                     on USB-cable mode (per 2026-05-10 multitouch pcap
+     *                     §1). Real device STALLs GET_REPORT on this ID; we
+     *                     match — returning 1387 zeros breaks the parser.
+     *
+     * Interface 2 — vendor 0xd:
+     *   0x3f 15B Input  — vendor IN
+     *   0x53 63B Output — vendor OUT (host may still issue GET on Output)
+     *
+     * Interface 3 — vendor 0x03:
+     *   0xc0 107B Input — vendor IN (NOT 1387B; 2026-05-09 doc misread)
+     *
+     * Body is zero-filled — probe checks descriptor+size agreement, not
+     * content. Live trackpad data flows over Interface 1 EP3 IN.
+     */
     case HID_GET_REPORT: {
         uint8_t report_id = value & 0xff;
         uint16_t reply_len = 0;
 
-        if (index == 0 && report_id == 0x02) {
-            reply_len = 7;
+        if (index == 0) {
+            switch (report_id) {
+            case 0xe0: reply_len = 4; break;
+            case 0x9a: reply_len = 1; break;
+            case 0x90: reply_len = 2; break;
+            default: break;
+            }
+        } else if (index == 1) {
+            switch (report_id) {
+            case 0x02: reply_len = 7; break;
+            case 0x3f: reply_len = 16; break;
+            /* 0x44 — match real-device STALL (unfilled descriptor slot). */
+            default: break;
+            }
+        } else if (index == 2) {
+            switch (report_id) {
+            case 0x3f: reply_len = 15; break;
+            case 0x53: reply_len = 63; break;
+            default: break;
+            }
+        } else if (index == 3) {
+            switch (report_id) {
+            case 0xc0: reply_len = 107; break;
+            default: break;
+            }
         }
 
         if (reply_len == 0) {

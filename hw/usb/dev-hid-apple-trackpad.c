@@ -587,29 +587,41 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
     case HID_SET_PROTOCOL:
         break;
 
-    /* HID class GET_REPORT — per-interface, per-Report-ID. v1 returned blanket
-     * zeros for every GET_REPORT, which made the macOS multitouch driver-chain
-     * probe (AppleMultitouchTrackpadHIDEventDriver) reject the device and fall
-     * through to the Bluetooth Setup Assistant.
+    /* HID class GET_REPORT — per-interface, per-Report-ID. Sizes mirror the
+     * Report Descriptor declarations exactly (decoded from the byte arrays
+     * above with tools/hid-decode.py); a size mismatch trips the macOS HID
+     * parser into a (a,4020001) busy timeout and the driver-chain probe
+     * (AppleMultitouchTrackpadHIDEventDriver) falls through to the Bluetooth
+     * Setup Assistant. STALL for IDs not declared on the queried interface
+     * (real-device behaviour). Pattern mirrors dev-hid.c's apple-magic-keyboard.
      *
-     * Real-device behaviour: respond with the declared report length for IDs
-     * the descriptor advertises; STALL for unknown IDs. We mirror the
-     * apple-magic-keyboard handler in dev-hid.c.
+     * Interface 0 — Apple TopCase vendor (shared across kbd and trackpad):
+     *   0xe0  4B Input — vendor TopCase event
+     *   0x9a  1B Input — modifier signal
+     *   0x90  2B Input — battery (AC/charge bits + level)
      *
-     * Interface 0 (vendor — Apple TopCase, shared shape across keyboard and
-     * trackpad):
-     *   0xe0  4 bytes  keyboard-event vendor report
-     *   0x9a  1 byte   modifier-signal vendor report
-     *   0x90  2 bytes  battery state (AC/charge bits + level byte)
+     * Interface 1 — Mouse + Digitizer + Vendor 0xc:
+     *   0x02  7B Input  — boot-mouse (button + dx + dy + 4B reserved). After
+     *                     SET_REPORT(feat,0x02,{0x02,0x01}) the same Report ID
+     *                     carries variable-length multitouch frames over EP3
+     *                     IN, but the HID-class GET_REPORT reply still uses
+     *                     the descriptor-declared 7B shape.
+     *   0x3f 16B Input  — vendor 0xc reply (descriptor REPORT_COUNT=16, NOT 15
+     *                     — Iface 2's 0x3f is 15B but Iface 1's is 16B).
+     *   0x44 1387B      — pre-allocated descriptor slot the device never fills
+     *                     on USB-cable mode (per 2026-05-10 multitouch pcap
+     *                     §1). Real device STALLs GET_REPORT on this ID; we
+     *                     match — returning 1387 zeros breaks the parser.
      *
-     * Interface 2 (trackpad-specific vendor):
-     *   0x3f 15 bytes  vendor IN report
-     *   0x53 63 bytes  vendor OUT report (host may still issue GET_REPORT on
-     *                  Output reports; HID-class permits it)
+     * Interface 2 — vendor 0xd:
+     *   0x3f 15B Input  — vendor IN
+     *   0x53 63B Output — vendor OUT (host may still issue GET on Output)
      *
-     * Body content is zero-filled — the probe phase checks descriptor + size
-     * agreement, not content. macOS pulls live trackpad data over Interface 1
-     * EP3 IN once attached (the multitouch input path).
+     * Interface 3 — vendor 0x03:
+     *   0xc0 107B Input — vendor IN (NOT 1387B; 2026-05-09 doc misread)
+     *
+     * Body is zero-filled — probe checks descriptor+size agreement, not
+     * content. Live trackpad data flows over Interface 1 EP3 IN.
      */
     case HID_GET_REPORT: {
         uint8_t report_id = value & 0xff;
@@ -622,15 +634,25 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
             case 0x90: reply_len = 2; break;
             default: break;
             }
+        } else if (index == 1) {
+            switch (report_id) {
+            case 0x02: reply_len = 7; break;
+            case 0x3f: reply_len = 16; break;
+            /* 0x44 — match real-device STALL (unfilled descriptor slot). */
+            default: break;
+            }
         } else if (index == 2) {
             switch (report_id) {
             case 0x3f: reply_len = 15; break;
             case 0x53: reply_len = 63; break;
             default: break;
             }
+        } else if (index == 3) {
+            switch (report_id) {
+            case 0xc0: reply_len = 107; break;
+            default: break;
+            }
         }
-        /* index == 1 (boot mouse / multitouch IN) and index == 3 have no
-         * GET_REPORT-deliverable feature reports; fall through to STALL. */
 
         if (reply_len == 0) {
             p->status = USB_RET_STALL;

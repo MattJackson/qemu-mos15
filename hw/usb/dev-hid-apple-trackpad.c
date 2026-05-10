@@ -553,6 +553,35 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
             request, value, index, length);
 
     switch (request) {
+    /* GET_DESCRIPTOR(REPORT) — per-interface HID Report Descriptor lookup.
+     * usb_desc_handle_control doesn't deliver these (HID-class extension);
+     * we have to dispatch by wIndex (interface number) ourselves. macOS'
+     * AppleUserUSBHostHIDDevice dext crashes with "::start fail" + IOUserServer
+     * "server exit before start()" if this STALLs — the dext can't parse the
+     * report layout and bails. Pattern mirrors dev-hid.c:1500 for
+     * apple-magic-keyboard. */
+    case InterfaceRequest | USB_REQ_GET_DESCRIPTOR:
+        if ((value >> 8) == 0x22) {
+            const uint8_t *rd = NULL;
+            uint16_t rd_len = 0;
+            uint16_t copy;
+            switch (index) {
+            case 0: rd = amtp_iface0_report_desc; rd_len = sizeof(amtp_iface0_report_desc); break;
+            case 1: rd = amtp_iface1_report_desc; rd_len = sizeof(amtp_iface1_report_desc); break;
+            case 2: rd = amtp_iface2_report_desc; rd_len = sizeof(amtp_iface2_report_desc); break;
+            case 3: rd = amtp_iface3_report_desc; rd_len = sizeof(amtp_iface3_report_desc); break;
+            default: break;
+            }
+            if (rd) {
+                copy = length < rd_len ? length : rd_len;
+                memcpy(data, rd, copy);
+                p->actual_length = copy;
+                fprintf(stderr, "AMTP:   GET_DESC(REPORT) idx=%d -> %dB\n",
+                        index, copy);
+                return;
+            }
+        }
+        break;
     /* HID class SET_REPORT — macOS issues feature/Report-0x02/{0x02, 0x01} on
      * Interface 1 to enable multitouch raw mode. ANY Interface-1 SET_REPORT
      * with a {0x02, *} payload trips multitouch; Linux's hid-magicmouse uses

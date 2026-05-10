@@ -327,6 +327,13 @@ typedef struct USBAppleMagicTrackpadState {
 
     /* QEMU input handler binding. */
     QemuInputHandlerState *input_handler;
+
+    /* Cached EP3 IN endpoint pointer for usb_wakeup() — pattern stolen from
+     * dev-hid.c apple-magic-keyboard's `boot_intr`. Without wakeup, after
+     * the host's first NAK on EP3 IN it parks the URB and never re-polls
+     * (interrupt-IN endpoints are level-triggered in the xhci sense — the
+     * device must signal "data ready" or the host stays parked). */
+    USBEndpoint *intr_ep3;
 } USBAppleMagicTrackpadState;
 
 OBJECT_DECLARE_SIMPLE_TYPE(USBAppleMagicTrackpadState, USB_APPLE_MAGIC_TRACKPAD)
@@ -356,6 +363,12 @@ static void amtp_enqueue(USBAppleMagicTrackpadState *s,
     memcpy(r->data, data, len);
     r->len = len;
     s->q_head = (s->q_head + 1) & (AMTP_QUEUE_DEPTH - 1);
+
+    /* Notify QEMU's USB stack that EP3 IN now has data. Without this, the
+     * host stays parked after its first NAK and never re-polls. */
+    if (s->intr_ep3) {
+        usb_wakeup(s->intr_ep3, 0);
+    }
 }
 
 /* Boot-mouse Report 0x02 (8 bytes) — emitted BEFORE multitouch enable.
@@ -778,8 +791,12 @@ static void usb_apple_magic_trackpad_realize(USBDevice *dev, Error **errp)
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
 
+    /* Cache EP3 IN for usb_wakeup() in amtp_enqueue(). */
+    s->intr_ep3 = usb_ep_get(dev, USB_TOKEN_IN, AMTP_EP_IFACE1_IN);
+
     s->input_handler = qemu_input_handler_register(DEVICE(dev),
                                                    &amtp_input_handler);
+    qemu_input_handler_activate(s->input_handler);
 }
 
 static void usb_apple_magic_trackpad_unrealize(USBDevice *dev)

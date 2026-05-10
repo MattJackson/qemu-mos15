@@ -552,7 +552,7 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
      * Interface 1 to enable multitouch raw mode. ANY Interface-1 SET_REPORT
      * with a {0x02, *} payload trips multitouch; Linux's hid-magicmouse uses
      * the same magic. */
-    case ClassInterfaceOutRequest | USB_REQ_SET_REPORT: {
+    case HID_SET_REPORT: {
         uint8_t report_type = (value >> 8) & 0xff;
         uint8_t report_id   = value & 0xff;
 
@@ -567,13 +567,13 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
         break;
     }
     /* HID class SET_IDLE — accept any value, no-op. */
-    case ClassInterfaceOutRequest | USB_REQ_SET_IDLE:
+    case HID_SET_IDLE:
         break;
 
     /* HID class GET_REPORT — return zeros (macOS doesn't seem to depend on
      * specific feature-report content; the driver's match phase only checks
      * descriptor + VID/PID + the SET_REPORT handshake we honor above). */
-    case ClassInterfaceRequest | USB_REQ_GET_REPORT:
+    case HID_GET_REPORT:
         memset(data, 0, length);
         p->actual_length = length;
         break;

@@ -112,7 +112,8 @@ jobs:
     name: build mos-qemu-oem
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.build_oem == 'true' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.build_oem == 'true') ||
+      contains(github.event.head_commit.added, 'Dockerfile.oem') ||
       contains(github.event.head_commit.modified, 'Dockerfile.oem')
     steps:
       - uses: actions/checkout@v4

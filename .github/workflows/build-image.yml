@@ -155,3 +155,4 @@ jobs:
 # Build trigger
 # Rebuild with format fix
 # Rebuild with iosurface.h include
+# Rebuild with displays pointer fix

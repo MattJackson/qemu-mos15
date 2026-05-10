@@ -157,3 +157,4 @@ jobs:
 # Rebuild with iosurface.h include
 # Rebuild with displays pointer fix
 # Rebuild with displays fix
+# Rebuild with brace fix

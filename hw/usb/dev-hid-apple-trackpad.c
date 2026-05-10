@@ -566,17 +566,83 @@ static void usb_apple_magic_trackpad_handle_control(USBDevice *dev, USBPacket *p
         p->actual_length = length;
         break;
     }
-    /* HID class SET_IDLE — accept any value, no-op. */
+
+    /* HID class SET_IDLE / GET_IDLE — boilerplate. Accept any SET_IDLE; report
+     * idle=0 (infinite) on GET_IDLE. macOS probes these on every HID iface
+     * during AppleUSBTopCaseHIDDriver match-probe; STALLing trips a retry
+     * loop that pushes the driver-chain attach into the BT-fallback path. */
     case HID_SET_IDLE:
         break;
-
-    /* HID class GET_REPORT — return zeros (macOS doesn't seem to depend on
-     * specific feature-report content; the driver's match phase only checks
-     * descriptor + VID/PID + the SET_REPORT handshake we honor above). */
-    case HID_GET_REPORT:
-        memset(data, 0, length);
-        p->actual_length = length;
+    case HID_GET_IDLE:
+        data[0] = 0;
+        p->actual_length = 1;
         break;
+
+    /* HID class GET_PROTOCOL / SET_PROTOCOL — accept SET; report protocol=1
+     * (report mode, not boot) on GET. Same defensive reasoning as SET_IDLE. */
+    case HID_GET_PROTOCOL:
+        data[0] = 1;
+        p->actual_length = 1;
+        break;
+    case HID_SET_PROTOCOL:
+        break;
+
+    /* HID class GET_REPORT — per-interface, per-Report-ID. v1 returned blanket
+     * zeros for every GET_REPORT, which made the macOS multitouch driver-chain
+     * probe (AppleMultitouchTrackpadHIDEventDriver) reject the device and fall
+     * through to the Bluetooth Setup Assistant.
+     *
+     * Real-device behaviour: respond with the declared report length for IDs
+     * the descriptor advertises; STALL for unknown IDs. We mirror the
+     * apple-magic-keyboard handler in dev-hid.c.
+     *
+     * Interface 0 (vendor — Apple TopCase, shared shape across keyboard and
+     * trackpad):
+     *   0xe0  4 bytes  keyboard-event vendor report
+     *   0x9a  1 byte   modifier-signal vendor report
+     *   0x90  2 bytes  battery state (AC/charge bits + level byte)
+     *
+     * Interface 2 (trackpad-specific vendor):
+     *   0x3f 15 bytes  vendor IN report
+     *   0x53 63 bytes  vendor OUT report (host may still issue GET_REPORT on
+     *                  Output reports; HID-class permits it)
+     *
+     * Body content is zero-filled — the probe phase checks descriptor + size
+     * agreement, not content. macOS pulls live trackpad data over Interface 1
+     * EP3 IN once attached (the multitouch input path).
+     */
+    case HID_GET_REPORT: {
+        uint8_t report_id = value & 0xff;
+        uint16_t reply_len = 0;
+
+        if (index == 0) {
+            switch (report_id) {
+            case 0xe0: reply_len = 4; break;
+            case 0x9a: reply_len = 1; break;
+            case 0x90: reply_len = 2; break;
+            default: break;
+            }
+        } else if (index == 2) {
+            switch (report_id) {
+            case 0x3f: reply_len = 15; break;
+            case 0x53: reply_len = 63; break;
+            default: break;
+            }
+        }
+        /* index == 1 (boot mouse / multitouch IN) and index == 3 have no
+         * GET_REPORT-deliverable feature reports; fall through to STALL. */
+
+        if (reply_len == 0) {
+            p->status = USB_RET_STALL;
+            break;
+        }
+        if (reply_len > length) {
+            reply_len = length;
+        }
+        memset(data, 0, reply_len);
+        p->actual_length = reply_len;
+        break;
+    }
 
     default:
         p->status = USB_RET_STALL;

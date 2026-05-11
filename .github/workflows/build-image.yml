@@ -10,7 +10,10 @@ name: Build + push QEMU images to GHCR
 
 on:
   push:
-    branches: [main]
+    # main = stable; hid = Apple HID device WIP branch (apple-magic-trackpad
+    # iteration etc.). Same workflow on both — main is the canonical artifact
+    # tag, hid produces `mos-qemu-patched:hid` for WIP testing.
+    branches: [main, hid]
     # Trigger filter — workflow only runs when relevant files change.
     # Per-job `if:` conditions further filter which jobs actually run.
     #
@@ -122,11 +125,13 @@ jobs:
           context: .
           file: Dockerfile.patched
           push: true
-          # Three tags: branch, commit-sha (qemu), commit-sha (qemu+lagfx pinned).
+          # Tags: branch (main/hid), commit-sha (qemu), commit-sha+lagfx (full pin).
           # The third is the fully reproducible build artifact for pinning
-          # mos-docker against an exact (qemu, lagfx) pair.
+          # mos-docker against an exact (qemu, lagfx) pair. github.ref_name
+          # resolves to 'main' or 'hid' so each branch publishes its own
+          # floating tag without overwriting the other.
           tags: |
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:main
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.ref_name }}
             ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}-lagfx-${{ steps.lagfx.outputs.sha }}
           build-args: |
@@ -138,7 +143,7 @@ jobs:
       - name: Print resolved tags
         run: |
           echo "Pushed:"
-          echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:main"
+          echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.ref_name }}"
           echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}"
           echo "  ${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-patched:${{ github.sha }}-lagfx-${{ steps.lagfx.outputs.sha }}"
 

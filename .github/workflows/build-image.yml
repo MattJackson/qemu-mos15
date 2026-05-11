@@ -101,26 +101,45 @@ jobs:
           echo "sha=$full_sha" >> "$GITHUB_OUTPUT"
           echo "Resolved libapplegfx-vulkan: $ref → $full_sha"
 
-      # If this run was kicked off by the same commit that introduces
-      # the stage1 split, the stage1 workflow is racing us and the
-      # stage1 image may not be in GHCR yet. Poll for it (max ~12 min)
-      # rather than failing immediately — saves the operator a manual
-      # re-run after the stage1 build completes.
-      - name: Wait for stage1 image
+      # If this commit also triggered the stage1 workflow, we must wait
+      # for THAT specific stage1 run to complete before building patched
+      # — otherwise we'd link Layer C against the previous stage1's image
+      # (with stale meson.build/tombstones) and produce a binary missing
+      # the patched devices entirely. Detection: query `gh run list` for
+      # any stage1 run on this exact commit. If found, wait until it
+      # completes. If not found, fall back to "any stage1 image exists"
+      # (the case where Dockerfile.stage1 didn't change in this push).
+      - name: Wait for stage1 (this commit, then any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/mos-qemu-stage1:${{ env.QEMU_VERSION }}"
-          echo "Checking $IMAGE is published in GHCR..."
-          for attempt in $(seq 1 72); do
-            if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-              echo "Stage1 image found on attempt $attempt."
-              exit 0
-            fi
-            echo "  attempt $attempt/72 — not yet, sleeping 10s..."
-            sleep 10
-          done
-          echo "::error::Stage1 image $IMAGE not found after ~12 min."
-          echo "::error::Trigger build-stage1.yml first, then re-run this workflow."
-          exit 1
+          SHA="${{ github.sha }}"
+          echo "Checking for stage1 workflow run on commit $SHA..."
+          stage1_run_id=$(gh run list \
+            --workflow build-stage1.yml \
+            --commit "$SHA" \
+            --repo ${{ github.repository }} \
+            --json databaseId,status \
+            --jq '.[] | select(.status != "completed") | .databaseId' | head -1)
+          if [ -n "$stage1_run_id" ]; then
+            echo "Found in-flight stage1 run $stage1_run_id on this commit — waiting for completion..."
+            gh run watch "$stage1_run_id" --repo ${{ github.repository }} --exit-status
+            echo "Stage1 run $stage1_run_id complete. Proceeding with patched build."
+          else
+            echo "No in-flight stage1 run on this commit; falling back to image existence check."
+            for attempt in $(seq 1 72); do
+              if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+                echo "Stage1 image found on attempt $attempt."
+                exit 0
+              fi
+              echo "  attempt $attempt/72 — not yet, sleeping 10s..."
+              sleep 10
+            done
+            echo "::error::Stage1 image $IMAGE not found after ~12 min."
+            echo "::error::Trigger build-stage1.yml first, then re-run this workflow."
+            exit 1
+          fi
 
       - name: Build + push patched image
         uses: docker/build-push-action@v5

@@ -480,6 +480,7 @@ apple_gfx_vblank_tick(void *opaque)
         return;
     }
 
+    // initial_surface_pushed
     if (!s->initial_surface_pushed) {
         dpy_gfx_update_full(s->con);
         s->initial_surface_pushed = true;

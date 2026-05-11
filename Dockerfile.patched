@@ -45,18 +45,6 @@ RUN mkdir -p /usr/lib/pkgconfig \
     > /usr/lib/pkgconfig/vulkan.pc \
     && ln -sf libvulkan.so.1 /usr/lib/libvulkan.so
 
-# Build libapplegfx-vulkan first so QEMU's mos-qemu meson.build finds it
-# at configure time. URL-pinned by SHA: when LIBAPPLEGFX_SHA changes the
-# layer invalidates without --no-cache.
-ADD https://github.com/MattJackson/libapplegfx-vulkan/archive/${LIBAPPLEGFX_SHA}.tar.gz /tmp/libapplegfx-vulkan.tar.gz
-RUN --mount=type=cache,target=/root/.ccache \
-    mkdir -p /tmp/libapplegfx-vulkan \
-    && tar xz -C /tmp/libapplegfx-vulkan --strip-components=1 -f /tmp/libapplegfx-vulkan.tar.gz \
-    && cd /tmp/libapplegfx-vulkan \
-    && meson setup --prefix=/usr --libdir=lib -Dtests=false /tmp/lagfx-build \
-    && DESTDIR=/tmp/lagfx-install ninja -C /tmp/lagfx-build install \
-    && cp -r /tmp/lagfx-install/usr/* /usr/    # install into builder for QEMU configure
-
 # Upstream QEMU tarball.
 ADD https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz /tmp/qemu-upstream.tar.xz
 
@@ -64,6 +52,13 @@ ADD https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz /tmp/qemu-upstream.tar
 # LAYER A — pre-build VANILLA QEMU. This layer is cached forever; only
 # invalidates on QEMU_VERSION bump or apk-deps change. ~3-4 min cold, 0s
 # warm (Docker layer cache).
+#
+# IMPORTANT: This must come BEFORE the libapplegfx-vulkan layer. lagfx's
+# main branch churns multiple times per hour during active development;
+# if its ADD-by-SHA layer sits above Layer A, every lagfx commit
+# cascades invalidation downward and Layer A rebuilds for free. Vanilla
+# QEMU configure has no dependency on libapplegfx — the patched
+# apple-gfx-pci-linux.c only enters the build in Layer C.
 # ---------------------------------------------------------------------------
 RUN --mount=type=cache,target=/root/.ccache \
     mkdir -p /tmp/qemu-build \
@@ -77,6 +72,22 @@ RUN --mount=type=cache,target=/root/.ccache \
         --disable-docs --disable-debug-info --disable-werror \
     && make -j$(nproc) \
     ; ccache -s || true
+
+# ---------------------------------------------------------------------------
+# Build libapplegfx-vulkan AFTER Layer A so its frequent main-branch
+# churn doesn't invalidate the slow vanilla-QEMU compile. URL-pinned by
+# SHA: when LIBAPPLEGFX_SHA changes the layer invalidates without
+# --no-cache. lagfx install lands in /usr so Layer C's patched
+# apple-gfx-pci-linux.c links against it.
+# ---------------------------------------------------------------------------
+ADD https://github.com/MattJackson/libapplegfx-vulkan/archive/${LIBAPPLEGFX_SHA}.tar.gz /tmp/libapplegfx-vulkan.tar.gz
+RUN --mount=type=cache,target=/root/.ccache \
+    mkdir -p /tmp/libapplegfx-vulkan \
+    && tar xz -C /tmp/libapplegfx-vulkan --strip-components=1 -f /tmp/libapplegfx-vulkan.tar.gz \
+    && cd /tmp/libapplegfx-vulkan \
+    && meson setup --prefix=/usr --libdir=lib -Dtests=false /tmp/lagfx-build \
+    && DESTDIR=/tmp/lagfx-install ninja -C /tmp/lagfx-build install \
+    && cp -r /tmp/lagfx-install/usr/* /usr/    # install into builder for QEMU rebuild
 
 # ---------------------------------------------------------------------------
 # LAYER B — overlay patched files. This layer invalidates ONLY when our

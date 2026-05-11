@@ -67,6 +67,17 @@ RUN mkdir -p /usr/lib/pkgconfig \
 # JUST that translation unit (real content now #includes real headers),
 # then relinks against the real .so. Total: ~30-60s.
 #
+# CRITICAL NAMING: the stub file and -l flag MUST match the real meson
+# output exactly. meson's `library('applegfx-vulkan', ...)` produces
+# `libapplegfx-vulkan.so` (hyphen) and pkg-config `-lapplegfx-vulkan`.
+# An earlier revision used `libapplegfx_vulkan.so` (underscore) here,
+# which baked `-lapplegfx_vulkan` into stage1's build.ninja. Layer C
+# then installed the real `libapplegfx-vulkan.so` as a DIFFERENT file
+# (the stub stayed in place untouched), so the relink resolved against
+# the empty stub and failed with undefined references to every lagfx
+# symbol. Hyphen everywhere keeps the stub path identical to the real
+# install path so Layer C's `cp -r` cleanly overlays it.
+#
 # WHY THIS DESIGN: lagfx is in active M5-lane development (multiple
 # pushes/hour). If lagfx were baked into stage1, every lagfx push would
 # trigger an 11-min stage1 rebuild — defeating the fast-build promise.
@@ -75,8 +86,8 @@ RUN mkdir -p /usr/lib/pkgconfig \
 # ---------------------------------------------------------------------------
 RUN mkdir -p /usr/lib /usr/lib/pkgconfig /tmp/stub-lagfx \
     && : > /tmp/stub-lagfx/empty.c \
-    && cc -shared -fPIC -o /usr/lib/libapplegfx_vulkan.so /tmp/stub-lagfx/empty.c \
-    && printf 'prefix=/usr\nName: libapplegfx-vulkan\nDescription: STUB (Dockerfile.patched replaces at Layer C)\nVersion: 0.0.0-stage1-stub\nLibs: -L/usr/lib -lapplegfx_vulkan\nCflags: -I/usr/include\n' \
+    && cc -shared -fPIC -o /usr/lib/libapplegfx-vulkan.so /tmp/stub-lagfx/empty.c \
+    && printf 'prefix=/usr\nName: libapplegfx-vulkan\nDescription: STUB (Dockerfile.patched replaces at Layer C)\nVersion: 0.0.0-stage1-stub\nLibs: -L/usr/lib -lapplegfx-vulkan\nCflags: -I/usr/include\n' \
        > /usr/lib/pkgconfig/libapplegfx-vulkan.pc \
     && rm -rf /tmp/stub-lagfx
 

@@ -68,6 +68,16 @@ RUN --mount=type=cache,target=/root/.ccache \
     && cp -r /tmp/lagfx-install/usr/* /usr/
 
 # ---------------------------------------------------------------------------
+# LAYER B1 — bake triangle SPVs for Stage 65d Option 3 runtime substitution.
+# Copied from libapplegfx-vulkan tarball unpacked above to /usr/share/lagfx/.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /usr/share/lagfx && \
+    cp /tmp/libapplegfx-vulkan/examples/triangle/out/triangle_vertex.spv \
+       /usr/share/lagfx/triangle_vertex.spv && \
+    cp /tmp/libapplegfx-vulkan/examples/triangle/out/triangle_fragment.spv \
+       /usr/share/lagfx/triangle_fragment.spv
+
+# ---------------------------------------------------------------------------
 # LAYER B — overlay patched files. This layer invalidates ONLY when our
 # hw/** or pc-bios/** changes — the meaningful trigger for a rebuild.
 # ---------------------------------------------------------------------------

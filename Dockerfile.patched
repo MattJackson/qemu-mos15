@@ -69,13 +69,18 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 # ---------------------------------------------------------------------------
 # LAYER B1 — bake triangle SPVs for Stage 65d Option 3 runtime substitution.
-# Copied from libapplegfx-vulkan tarball unpacked above to /usr/share/lagfx/.
+# Copied from libapplegfx-vulkan tarball unpacked above. Written into
+# /tmp/lagfx-install/usr/share/lagfx/ — the final `FROM scratch` stage only
+# carries content from /tmp/qemu-install/ and /tmp/lagfx-install/ (see end
+# of file), so writing to /usr/share/lagfx/ here would strand the files in
+# the builder root. The freshman's first cut of this layer hit that trap;
+# /tmp/lagfx-install/usr/* is the lagfx artifact tree the final stage picks up.
 # ---------------------------------------------------------------------------
-RUN mkdir -p /usr/share/lagfx && \
+RUN mkdir -p /tmp/lagfx-install/usr/share/lagfx && \
     cp /tmp/libapplegfx-vulkan/examples/triangle/out/triangle_vertex.spv \
-       /usr/share/lagfx/triangle_vertex.spv && \
+       /tmp/lagfx-install/usr/share/lagfx/triangle_vertex.spv && \
     cp /tmp/libapplegfx-vulkan/examples/triangle/out/triangle_fragment.spv \
-       /usr/share/lagfx/triangle_fragment.spv
+       /tmp/lagfx-install/usr/share/lagfx/triangle_fragment.spv
 
 # ---------------------------------------------------------------------------
 # LAYER B — overlay patched files. This layer invalidates ONLY when our
